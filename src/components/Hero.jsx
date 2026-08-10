@@ -68,6 +68,13 @@ export default function Hero({ stageRef }) {
         </motion.div>
       </div>
 
+      <img
+        className="hero__tiger"
+        src="/images/Firefly.png"
+        alt=""
+        aria-hidden="true"
+      />
+
       <motion.a
         href="#work"
         className="hero__arrow"

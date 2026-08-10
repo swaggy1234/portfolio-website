@@ -111,6 +111,14 @@
   transform-origin: center center;
 }
 
+/* Decorative tiger — individually selectable in Builder.io */
+.hero__tiger {
+  position: absolute;
+  pointer-events: none;
+  background: transparent;
+  z-index: 2;
+}
+
 .hero__arrow {
   position: absolute;
   bottom: clamp(2rem, 5vh, 3.5rem);

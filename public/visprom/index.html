@@ -1,0 +1,1921 @@
+<!DOCTYPE html>
+<meta charset="utf-8"></meta>
+
+
+<html>
+
+<head>
+  <link rel="preload" href="/static/js/res.js?v=selection-workflow-v106" as="script">
+<style>
+  #appShell { display: none; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #ffffff;
+  }
+  #appLoadingScreen {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    background: #ffffff;
+    align-items: center;
+    justify-content: center;
+  }
+  .visprom-loader-spin {
+    width: 48px;
+    height: 48px;
+    box-sizing: border-box;
+    border: 4px solid #e5e7eb;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+  }
+  #vispromNameModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.45);
+    align-items: center;
+    justify-content: center;
+  }
+  #vispromNameModal.visprom-name-visible {
+    display: flex;
+  }
+  #vispromNameModal .visprom-name-box {
+    background: #fff;
+    padding: 24px 28px;
+    border-radius: 10px;
+    min-width: 320px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  #vispromNameModal .visprom-name-title {
+    margin: 0 0 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #111;
+  }
+  #vispromNameModal input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    font-size: 14px;
+    margin-bottom: 14px;
+    border: 1px solid #767676;
+    border-radius: 6px;
+  }
+  #vispromNameModal button {
+    padding: 8px 18px;
+    font-size: 14px;
+    cursor: pointer;
+    border: 1px solid #3a80c2;
+    border-radius: 6px;
+    background: #d4f0ff;
+    color: #202020;
+  }
+</style>
+<script>
+(function () {
+  window.__vispromLoadingActive = false;
+  var spinnerTimer = null;
+
+  function stopSpinner() {
+    if (spinnerTimer != null) {
+      clearInterval(spinnerTimer);
+      spinnerTimer = null;
+    }
+  }
+
+  function startSpinner() {
+    stopSpinner();
+    var host = document.getElementById('vispromSpinnerHost');
+    if (!host) return;
+    host.innerHTML = '';
+    var ring = document.createElement('div');
+    ring.className = 'visprom-loader-spin';
+    ring.setAttribute('role', 'presentation');
+    host.appendChild(ring);
+    var angle = 0;
+    spinnerTimer = setInterval(function () {
+      if (!window.__vispromLoadingActive) return;
+      angle = (angle + 15) % 360;
+      ring.style.transform = 'rotate(' + angle + 'deg)';
+    }, 40);
+  }
+
+  window.vispromSetLoading = function (on) {
+    var layer = document.getElementById('appLoadingScreen');
+    var shell = document.getElementById('appShell');
+    if (on) {
+      window.__vispromLoadingActive = true;
+      if (layer) layer.style.display = 'flex';
+      if (shell) shell.style.display = 'none';
+      startSpinner();
+    } else {
+      window.__vispromLoadingActive = false;
+      stopSpinner();
+      if (layer) layer.style.display = 'none';
+      if (shell) {
+        shell.style.display = 'block';
+        shell.style.visibility = 'visible';
+        shell.style.opacity = '1';
+      }
+    }
+  };
+
+  window.vispromSetLoading(true);
+  window.addEventListener('unload', stopSpinner);
+})();
+</script>
+</head>
+
+<body>
+  <div id="appLoadingScreen" aria-label="Loading" aria-busy="true">
+    <div id="vispromSpinnerHost"></div>
+  </div>
+  <div id="appShell">
+  <div class="section-bar" id="sectionBar">
+    <div class="section-bar-dataset"></div>
+    <div class="section-bar-panels">
+      <button type="button" data-panel-toggle="panel-data">Data</button>
+      <button type="button" data-panel-toggle="panel-splom">SPLOM</button>
+      <button type="button" data-panel-toggle="panel-main">Main Chart</button>
+      <button type="button" data-panel-toggle="panel-selection">Selections</button>
+      <button type="button" data-panel-toggle="panel-history">History</button>
+      <button type="button" id="mainChartSettingsToggleBtn" aria-haspopup="dialog" aria-expanded="false">Settings</button>
+      <button type="button" id="resetPanelsBtn">Reset Layout</button>
+    </div>
+  </div>
+  <div class="grid-container">
+    <div class="split-row top-row-wrap">
+      <div class="split-row top-row">
+      <section class="panel panel-data" data-panel="panel-data">
+        <div class="panel-head"><span>Data + Custom Dims</span></div>
+        <div class="panel-body">
+          <div class="customInput"></div>
+          <div class="tableView"></div>
+        </div>
+      </section>
+      <div class="drag-handle v" data-handle="top-data-splom" title="Drag to resize"></div>
+      <section class="panel panel-splom" data-panel="panel-splom">
+        <div class="panel-head panel-head-with-actions">
+          <span>SPLOM</span>
+          <div class="splom-head-actions"></div>
+        </div>
+        <div class="panel-body splom-panel-body">
+          <div id="splom-family-toolbar-mount" class="splom-family-toolbar-mount" hidden></div>
+          <div class="splom"></div>
+        </div>
+      </section>
+      <div class="drag-handle v" data-handle="top-splom-main" title="Drag to resize"></div>
+      <section class="panel panel-main" data-panel="panel-main">
+        <div class="panel-head panel-head-with-actions">
+          <span>Main Chart</span>
+          <div class="main-chart-head-actions">
+            <div id="main-chart-time-controls" class="main-chart-time-controls" hidden>
+              <button type="button" id="time-play-btn">Play</button>
+              <label class="time-speed-label">
+                Speed:
+                <select id="time-speed-select">
+                  <option value="0.5x">0.5x</option>
+                  <option value="1x" selected>1x</option>
+                  <option value="2x">2x</option>
+                  <option value="4x">4x</option>
+                </select>
+              </label>
+              <input id="time-slider" type="range" min="0" max="10" step="1" />
+              <span id="time-slider-label">T0</span>
+            </div>
+            <label class="main-chart-mode-label" title="Original: classic points. Density: low-opacity points with contour overlay.">
+              Main Chart Mode:
+              <select id="mainChartModeSelect">
+                <option value="original" selected>Original</option>
+                <option value="density">Density</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="main-chart-souche-navigator" class="main-chart-souche-navigator" hidden>
+            <button type="button" id="prev-souche-btn">Previous</button>
+            <span id="current-souche-label">Souche 1/6: LMD22</span>
+            <select id="souche-select" aria-label="Select Souche"></select>
+            <button type="button" id="next-souche-btn">Next</button>
+          </div>
+          <div id="main-chart-pair-title" class="main-chart-pair-title" hidden></div>
+          <div class="mainView"></div>
+        </div>
+      </section>
+      </div>
+    </div>
+
+    <div class="drag-handle h" data-handle="main-bottom" title="Drag to resize"></div>
+
+    <div class="split-row bottom-row-wrap">
+      <div class="split-row bottom-row">
+        <section class="panel panel-selection" data-panel="panel-selection">
+          <div class="panel-head"><span>Selections</span></div>
+          <div class="panel-body">
+            <div class="selectionType"></div>
+            <div class="selectionTable"></div>
+            <div class="groupOp"></div>
+            <div class="colorOp"></div>
+            <div class="extra"></div>
+          </div>
+        </section>
+        <div class="drag-handle v" data-handle="bottom-selection-history" title="Drag to resize"></div>
+        <section class="panel panel-history" data-panel="panel-history">
+          <div class="panel-head"><span>History + Save</span></div>
+          <div class="panel-body">
+            <div class="viewHistory"></div>
+            <div class="saveB">
+              <div class="saveB-log-icons">
+                <button type="button" id="upload-log-btn">Upload Saved Log</button>
+                <input id="upload-log-input" type="file" accept=".json,application/json" style="display:none" />
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div id="vispromNameModal" role="dialog" aria-modal="true" aria-label="Enter your name">
+    <div class="visprom-name-box">
+      <p class="visprom-name-title">Please enter your name</p>
+      <input id="vispromNameInput" type="text" placeholder="Your name" autocomplete="name" />
+      <button type="button" id="vispromNameContinue">Continue</button>
+    </div>
+  </div>
+
+  <div id="mainChartSettingsOverlay" hidden>
+    <div id="mainChartSettingsPanel" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="settings-modal-title">Configure Settings</div>
+      <div class="settings-modal-subtitle">Change the number of selections and contour lines for the main chart.</div>
+      <label class="settings-modal-field" title="Number of colored selection layers (Blue excluded).">
+        <span>Number of selections</span>
+        <input id="mainChartSettingsSelectionsInput" type="number" min="1" step="1" />
+      </label>
+      <label class="settings-modal-field" title="Density contour threshold count (how many contour lines you see).">
+        <span>Number of contour lines</span>
+        <input id="mainChartSettingsContourLevelsInput" type="number" min="2" step="1" />
+      </label>
+      <div class="settings-modal-actions">
+        <button type="button" id="mainChartSettingsCancelBtn">Close</button>
+        <button type="button" id="mainChartSettingsApplyBtn">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+    var defaults = { selections: 10, contourLevels: 8 };
+
+    function getSettings() {
+      if (!window.__vispromMainChartSettings) {
+        window.__vispromMainChartSettings = { selections: defaults.selections, contourLevels: defaults.contourLevels };
+      }
+      return window.__vispromMainChartSettings;
+    }
+
+    function clampInt(value, min, max) {
+      var n = parseInt(value, 10);
+      if (!Number.isFinite(n)) return min;
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function wireSettingsModal() {
+      var btn = document.getElementById('mainChartSettingsToggleBtn');
+      var overlay = document.getElementById('mainChartSettingsOverlay');
+      var panel = document.getElementById('mainChartSettingsPanel');
+      var selInput = document.getElementById('mainChartSettingsSelectionsInput');
+      var contourInput = document.getElementById('mainChartSettingsContourLevelsInput');
+      var applyBtn = document.getElementById('mainChartSettingsApplyBtn');
+      var cancelBtn = document.getElementById('mainChartSettingsCancelBtn');
+      if (!btn || !overlay || !panel || !selInput || !contourInput || !applyBtn || !cancelBtn) return;
+      if (btn.__vispromInlineSettingsBound) return;
+      btn.__vispromInlineSettingsBound = true;
+
+      var settings = getSettings();
+      selInput.value = String(settings.selections);
+      contourInput.value = String(settings.contourLevels);
+
+      function openModal() {
+        var s = getSettings();
+        selInput.value = String(s.selections);
+        contourInput.value = String(s.contourLevels);
+        overlay.removeAttribute('hidden');
+        btn.setAttribute('aria-expanded', 'true');
+        setTimeout(function () { selInput.focus(); }, 0);
+      }
+
+      function closeModal() {
+        overlay.setAttribute('hidden', '');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+
+      function applySettings() {
+        var s = getSettings();
+        s.selections = clampInt(selInput.value, 1, 99);
+        s.contourLevels = clampInt(contourInput.value, 2, 32);
+        selInput.value = String(s.selections);
+        contourInput.value = String(s.contourLevels);
+        if (typeof window.__vispromApplyMainChartSettings === 'function') {
+          window.__vispromApplyMainChartSettings(s.selections, s.contourLevels);
+        }
+        window.dispatchEvent(new CustomEvent('visprom-main-chart-settings', { detail: s }));
+        closeModal();
+      }
+
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openModal();
+      });
+      cancelBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        closeModal();
+      });
+      applyBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        applySettings();
+      });
+      panel.addEventListener('click', function (e) { e.stopPropagation(); });
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeModal();
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e && e.key === 'Escape' && !overlay.hasAttribute('hidden')) closeModal();
+      });
+      selInput.addEventListener('keydown', function (e) {
+        if (e && e.key === 'Enter') applySettings();
+      });
+      contourInput.addEventListener('keydown', function (e) {
+        if (e && e.key === 'Enter') applySettings();
+      });
+
+      window.__vispromSettingsModalReady = true;
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', wireSettingsModal);
+    } else {
+      wireSettingsModal();
+    }
+  })();
+  </script>
+
+  <script src="/static/js/userInit.js?v=selection-workflow-v106"></script>
+</body>
+<style>
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
+
+.section-bar {
+  height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid #d9d9d9;
+  background: #fff;
+}
+.section-bar-dataset {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.section-bar-panels {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.section-bar button {
+  border: 1px solid #767676;
+  background: #f8f8f8;
+  color: #202020;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.section-bar button.active-layout {
+  background: #d4f0ff;
+  border-color: #3a80c2;
+}
+
+.grid-container {
+  height: calc(100vh - 44px);
+  width: 100vw;
+  box-sizing: border-box;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.split-row {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+}
+.top-row-wrap {
+  flex: 0 0 70%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.top-row {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.bottom-row-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bottom-row {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel {
+  border: 1px solid #cecece;
+  border-radius: 8px;
+  min-width: 0;
+  min-height: 0;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panel-head {
+  border-bottom: 1px solid #e3e3e3;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 24px;
+  box-sizing: border-box;
+}
+.panel-body {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  overflow: auto;
+  padding: 4px;
+  box-sizing: border-box;
+}
+.panel-history .panel-body { display: flex; flex-direction: column; }
+.panel-hidden { display: none !important; }
+.panel-collapsed {
+  flex: 0 0 44px !important;
+  max-width: 44px;
+  min-width: 44px;
+}
+.panel-collapsed .panel-body { display: none !important; }
+.panel-collapsed .panel-head {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  border-bottom: 0;
+  border-left: 1px solid #e3e3e3;
+  height: 100%;
+  min-height: 100%;
+  padding: 6px 4px;
+}
+.panel-collapsed {
+  border-radius: 6px;
+}
+
+.drag-handle {
+  flex: 0 0 auto;
+  background: rgba(70, 70, 70, 0.16);
+  border-radius: 4px;
+  opacity: 0.65;
+  transition: opacity 120ms ease, background-color 120ms ease;
+  z-index: 3;
+}
+.drag-handle:hover,
+.drag-handle.dragging {
+  opacity: 1;
+  background: rgba(50, 130, 220, 0.42);
+}
+.drag-handle.v { width: 12px; cursor: ew-resize; margin: 0 4px; }
+.drag-handle.h { height: 12px; cursor: ns-resize; margin: 0 2px; }
+
+.customInput, .tableView, .mainView, .splom, .selectionType, .selectionTable, .groupOp, .colorOp, .extra, .viewHistory, .saveB {
+  min-width: 0;
+  min-height: 0;
+}
+.tableView, .splom, .selectionTable, .colorOp, .viewHistory { overflow: auto; }
+.panel-main .panel-body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.mainView {
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.panel-head-with-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.panel-splom .panel-head-with-actions {
+  justify-content: flex-start;
+}
+.panel-splom .splom-head-actions {
+  margin-left: auto;
+}
+.main-chart-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.main-chart-time-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+.main-chart-time-controls[hidden] {
+  display: none !important;
+}
+#time-play-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border: 1px solid #3a80c2;
+  border-radius: 4px;
+  background: #f0f9ff;
+  color: #1e3a5f;
+  font-weight: 600;
+}
+.time-speed-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #374151;
+  white-space: nowrap;
+}
+#time-speed-select {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+}
+#time-slider {
+  width: 180px;
+}
+#time-slider-label {
+  font-weight: 600;
+  min-width: 40px;
+  font-size: 12px;
+  color: #111827;
+}
+.main-chart-mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+}
+#mainChartModeSelect {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+}
+.main-chart-souche-navigator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 4px 0;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  flex: 0 0 auto;
+}
+.main-chart-souche-navigator[hidden] {
+  display: none !important;
+}
+.main-chart-souche-navigator button {
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border: 1px solid #3a80c2;
+  border-radius: 4px;
+  background: #f0f9ff;
+  color: #1e3a5f;
+  font-weight: 600;
+}
+.main-chart-souche-navigator button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+#current-souche-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  min-width: 120px;
+}
+#souche-select {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  max-width: 180px;
+}
+.main-chart-pair-title {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 4px 2px;
+  line-height: 1.3;
+}
+.main-chart-pair-title[hidden] {
+  display: none !important;
+}
+.mainView #mainview {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.mainView #mainview {
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+.mainView #mainview svg.bigView {
+  display: block;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.saveB { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.saveB-log-icons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#upload-log-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid #3a80c2;
+  border-radius: 6px;
+  background: #f0f9ff;
+  color: #1e3a5f;
+  font-weight: 600;
+}
+
+.splom-dim-panel button,
+.family-dim-panel button {
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border: 1px solid #9ca3af;
+  border-radius: 4px;
+  background: #f9fafb;
+}
+.splom-dim-panel button:hover,
+.family-dim-panel button:hover { background: #eef2ff; }
+.family-dim-panel {
+  font-size: 12px;
+}
+.family-dim-actions,
+.family-manual-create {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.family-manual-create input,
+#family-name-input {
+  min-width: 160px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+.family-dimension-list {
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 6px;
+  background: #fafafa;
+}
+.family-panel-hint {
+  color: #6b7280;
+  font-size: 11px;
+  margin-bottom: 6px;
+  line-height: 1.35;
+}
+.family-summary-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  font-size: 11px;
+}
+.family-summary-state {
+  color: #6b7280;
+  min-width: 88px;
+  font-size: 10px;
+}
+.family-summary-name {
+  font-weight: 600;
+  flex: 1;
+}
+.family-summary-count {
+  color: #9ca3af;
+  font-family: monospace;
+}
+.family-group-section {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #e5e7eb;
+}
+.family-group-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.family-group-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+.family-remove-btn {
+  margin-left: auto;
+}
+.family-dim-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 96px;
+}
+.family-dim-item {
+  font-size: 10px;
+  font-family: monospace;
+  color: #4b5563;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.family-group-section.is-others .family-summary-name {
+  color: #6b7280;
+}
+.table-family-header-row th {
+  background: #f3f4f6;
+  font-size: 10px;
+  font-weight: 700;
+  color: #374151;
+  text-align: center;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 3px 4px;
+}
+.table-family-header-row th.table-family-label.is-others {
+  color: #6b7280;
+  font-weight: 600;
+}
+.table-family-label .table-family-remove-btn {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.table-family-header-row th.table-family-spacer {
+  background: #fafafa;
+  border-bottom: 1px solid #e5e7eb;
+}
+.panel-splom .splom-panel-body {
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+.splom-souche-dropdown-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 10px;
+}
+.splom-souche-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+.splom-souche-select {
+  height: 30px;
+  min-width: 140px;
+  max-width: 180px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  padding: 0 8px;
+}
+.panel-splom .splom-family-toolbar-mount {
+  flex-shrink: 0;
+}
+.panel-splom .splom {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  touch-action: pan-x pan-y;
+}
+.splom-family-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 4px 8px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 4px;
+  background: #fff;
+}
+.splom-family-toolbar-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #374151;
+  margin-right: 4px;
+}
+.splom-family-chip {
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+  border-radius: 999px !important;
+  border: 1px solid #d1d5db !important;
+  background: #f9fafb !important;
+  cursor: pointer;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.splom-family-chip.is-expanded {
+  border-color: #93c5fd !important;
+  background: #eff6ff !important;
+  color: #1d4ed8;
+}
+.splom-family-chip.is-collapsed {
+  color: #6b7280;
+}
+.splom-family-col-band {
+  margin-bottom: 2px;
+}
+.splom-family-col-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 2px 4px;
+  box-sizing: border-box;
+}
+.splom-family-band-toggle,
+.splom-family-row-band {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #334155;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.splom-family-row-band {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  right: 2px;
+  z-index: 2;
+}
+.splom-row-family-start .splom-row-label-wrap svg {
+  transform: translateY(10px);
+}
+.splom-row-family-start {
+  border-top: 2px solid #e2e8f0;
+}
+.splom-empty-family-message {
+  padding: 24px 16px;
+  color: #6b7280;
+  font-size: 13px;
+  text-align: center;
+}
+.family-map-warnings {
+  margin: 4px 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+}
+.family-empty-hint {
+  color: #6b7280;
+  font-style: italic;
+  padding: 4px 2px;
+}
+.splom-dim-checkbox-list label.splom-dim-check span {
+  word-break: break-word;
+}
+
+.datasetSelector {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  max-width: 520px;
+}
+.datasetSelector-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.datasetSelector-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+.datasetDropdown {
+  position: relative;
+  flex: 1 1 140px;
+  min-width: 140px;
+  max-width: 220px;
+}
+.datasetDropdown-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #767676;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+.datasetDropdown-toggle-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.datasetDropdown-chevron {
+  flex: 0 0 auto;
+  color: #6b7280;
+  font-size: 11px;
+}
+.datasetDropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 2000;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #767676;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+.datasetDropdown-menu.is-open {
+  display: block;
+}
+.datasetDropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.datasetDropdown-item:last-child {
+  border-bottom: none;
+}
+.datasetDropdown-item.is-selected {
+  background: #eff6ff;
+}
+.datasetDropdown-label {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+.datasetDropdown-label:hover {
+  background: #f3f4f6;
+}
+.datasetUploadBtn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid #767676;
+  border-radius: 6px;
+  background: #f8f8f8;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.datasetUploadBtn input { display: none; }
+.datasetSavedDelete {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #b91c1c;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.datasetSavedDelete:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+.datasetStatus {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.splom .splom-labels, .splom .splom-row { width: max-content; }
+.splom .splom-labels { align-items: end; }
+.splom .splom-col-header { overflow: hidden; display: block; }
+.splom .tooltip { box-sizing: border-box; overflow: visible !important; position: relative; }
+.splom .splom-cell {
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 2px;
+  transition: border-color 120ms ease, border-width 120ms ease, background-color 120ms ease, box-shadow 120ms ease, outline-color 120ms ease;
+}
+.splom .splom-cell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--splom-heat-overlay, transparent);
+  opacity: 1;
+  z-index: 2;
+}
+.splom .splom-cell.active-splom-cell {
+  z-index: 3;
+  border-color: transparent !important;
+  border-width: 1px !important;
+  outline: none;
+  box-shadow: none;
+}
+.splom .splom-cell.active-splom-cell::after {
+  opacity: 1;
+}
+.splom .splom-cell.active-splom-cell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 11;
+  border-radius: 2px;
+  animation: splom-active-heartbeat 1.65s ease-in-out infinite;
+  box-shadow:
+    inset 0 0 0 var(--splom-active-stroke-base, 3px) #111,
+    0 0 0 var(--splom-active-stroke-glow1, 2px) rgba(17, 17, 17, 0.28);
+}
+@keyframes splom-active-heartbeat {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 var(--splom-active-stroke-min, 2px) #111,
+      0 0 0 var(--splom-active-stroke-glow1, 2px) rgba(17, 17, 17, 0.2);
+    opacity: 1;
+  }
+  12% {
+    box-shadow:
+      inset 0 0 0 var(--splom-active-stroke-pulse1, 5px) #111,
+      0 0 0 var(--splom-active-stroke-glow2, 4px) rgba(17, 17, 17, 0.35);
+    opacity: 1;
+  }
+  24% {
+    box-shadow:
+      inset 0 0 0 var(--splom-active-stroke-min, 2px) #111,
+      0 0 0 var(--splom-active-stroke-glow1, 2px) rgba(17, 17, 17, 0.18);
+    opacity: 0.92;
+  }
+  36% {
+    box-shadow:
+      inset 0 0 0 var(--splom-active-stroke-pulse2, 4px) #111,
+      0 0 0 var(--splom-active-stroke-glow2, 5px) rgba(17, 17, 17, 0.28);
+    opacity: 1;
+  }
+  52%, 100% {
+    box-shadow:
+      inset 0 0 0 var(--splom-active-stroke-min, 2px) #111,
+      0 0 0 var(--splom-active-stroke-glow1, 2px) rgba(17, 17, 17, 0.2);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splom .splom-cell.active-splom-cell::before {
+    animation: none;
+    box-shadow:
+      inset 0 0 0 var(--splom-active-stroke-base, 3px) #111,
+      0 0 0 var(--splom-active-stroke-glow1, 2px) rgba(17, 17, 17, 0.25);
+  }
+}
+.splom .splom-cell.splom-cell-hovered:not(.active-splom-cell)::before,
+.splom .splom-cell.splom-cell-matching-pair:not(.active-splom-cell)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: inset 0 0 0 var(--splom-hover-stroke, 4px) #dc2626;
+}
+.splom-compare-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 2px;
+}
+.splom-mode-control,
+.main-chart-view-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-right: 12px;
+}
+.splom-mode-control label,
+.main-chart-view-control label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.splom-mode-label,
+.main-chart-view-label {
+  font-weight: 600;
+  color: #374151;
+}
+.comparison-dataset-panel {
+  width: 100%;
+}
+.yeast-mode-control label,
+.yeast-selection-target-control label {
+  cursor: pointer;
+}
+.yeast-triangle-picker select {
+  font-size: 12px;
+  margin-left: 4px;
+}
+.yeast-pair-actions button {
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid #767676;
+  border-radius: 6px;
+  background: #f8f8f8;
+  cursor: pointer;
+}
+.yeast-saved-pair-cell {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fafafa;
+}
+.yeast-mini-title {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: #374151;
+}
+.yeast-mini-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  margin-top: 2px;
+}
+.yeast-mini-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.yeast-mini-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  border-radius: 2px;
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+}
+.splom .splom-plot {
+  position: relative;
+  display: block;
+  z-index: 1;
+}
+.splom .splom-cell .tooltiptext {
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 20;
+  left: 50%;
+  bottom: auto;
+  top: 4px;
+  transform: translateX(-50%);
+}
+.splom .splom-cell.splom-cell-hovered .tooltiptext {
+  visibility: visible;
+}
+.visprom-floating-tooltip {
+  display: none;
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  background: rgba(17, 24, 39, 0.94);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.splom .splom-plot {
+  cursor: pointer;
+}
+
+.bigView { width: 100%; height: 100%; }
+
+@media (max-width: 1100px) {
+  body { overflow: auto; }
+  .grid-container { height: auto; min-height: calc(100vh - 44px); }
+  .top-row, .bottom-row { flex-direction: column; height: auto; }
+  .drag-handle.v { display: none !important; }
+}
+
+    .selected {
+        opacity: 1 !important;
+        stroke: black;
+        stroke-width: 1px;
+    }
+
+    .active {
+        filter: brightness(75%);
+        background: rgb(255,255,0)
+    }
+    .active2{
+        background-color: #ceca00;
+    }
+
+    /* Selection layers table: stretch full width of the Selections panel */
+    #selection-layer-table {
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .selection-layer-table {
+        width: 100%;
+        box-sizing: border-box;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+    .selection-layer-table th,
+    .selection-layer-table td {
+        border-bottom: 1px solid #616161;
+        padding: 2px 4px;
+        text-align: left;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: middle;
+    }
+    /* Compact columns stay tight; Name + Annotation absorb the remaining width */
+    .selection-layer-table .selection-col-color { width: 96px; }
+    .selection-layer-table .selection-col-name { width: auto; }
+    .selection-layer-table .selection-col-count { width: 64px; white-space: nowrap; }
+    .selection-layer-table .selection-col-annotation { width: auto; }
+    .selection-layer-table .selection-col-export { width: 56px; white-space: nowrap; }
+    .selection-layer-table .selection-col-controls { width: 28px; white-space: nowrap; }
+    .selection-layer-table .selection-layer-row-controls {
+        white-space: nowrap;
+        text-align: center;
+        width: 28px;
+    }
+    .selection-layer-table .selection-layer-add-row td {
+        border-bottom: none;
+        padding-top: 8px;
+    }
+    .selection-layer-table .selection-layer-row-btn {
+        width: 20px;
+        height: 20px;
+        line-height: 18px;
+        padding: 0;
+        font-size: 15px;
+        font-weight: bold;
+        text-align: center;
+        border: 1px solid #616161;
+        border-radius: 4px;
+        background: #2b2b2b;
+        color: #f0f0f0;
+        cursor: pointer;
+    }
+    .selection-layer-table .selection-layer-row-btn:hover:not(:disabled) {
+        background: #3c3c3c;
+    }
+    .selection-layer-table .selection-layer-row-btn.add {
+        color: #7CFC7C;
+    }
+    .selection-layer-table .selection-layer-row-btn.remove {
+        color: #ff8a8a;
+    }
+    .selection-layer-table .selection-layer-row-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+    }
+    /* Let text inputs fill their cells so columns visibly expand full-width */
+    .selection-layer-table .selection-name-input,
+    .selection-layer-table .selection-annotation-input {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Intersection export: stacked, multi-line layout (not squished) */
+    #intersection-export-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 12px;
+        padding: 10px;
+        border: 1px solid #616161;
+        border-radius: 4px;
+    }
+    #intersection-export-panel .panel-title {
+        margin: 0;
+        font-weight: bold;
+        font-size: 13px;
+    }
+    #intersection-export-panel .intersection-section-label {
+        margin: 0;
+        font-size: 12px;
+        opacity: 0.85;
+    }
+    #intersection-selection-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    /* Each selection checkbox + label sits on its own line with breathing room */
+    #intersection-selection-list .intersection-choice-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 2px 0;
+        font-size: 12px;
+        cursor: pointer;
+    }
+    #intersection-selection-list .intersection-choice-row input[type="checkbox"] {
+        flex-shrink: 0;
+        margin: 0;
+    }
+    #intersection-selection-list .intersection-choice-chip {
+        flex-shrink: 0;
+    }
+    #intersection-selection-list .intersection-choice-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+    #intersection-preview {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 12px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+    }
+    #download-intersection-csv-btn {
+        align-self: flex-start;
+        margin: 0;
+    }
+    
+    #selectTable {
+    padding: 1px 4px;
+    border: 1px black solid;
+    
+    }
+    
+    #selectTable > tr > td,th {
+        border-bottom: 1px solid #616161;
+        
+        white-space :nowrap
+    }
+    
+    #selectTable > tr:hover {
+        background-color: #56778a;
+        border-bottom: 1px solid #616161;
+       
+    }
+    .buttonIm:hover{
+        filter: brightness(50%);
+    }
+
+    
+    #tableView_table > * >tr > td,th {
+        border: 1px solid black;
+    }
+
+    .table-dim-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      margin: 0;
+    }
+
+    .table-dim-checkbox {
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    #tableView_table th.selected-column,
+    #tableView_table td.selected-column {
+      background: #dbeafe !important;
+      border-left: 2px solid #3b82f6 !important;
+      border-right: 2px solid #3b82f6 !important;
+    }
+
+    #tableView_table th.selected-column {
+      background: #bfdbfe !important;
+      color: #111827;
+    }
+    
+    #tableView_table > tr:hover {
+        background-color: #56778a;
+        border-bottom: 1px solid #616161;
+    }
+    
+/* Tooltip container */
+.tooltip {
+  position: relative;
+  display: inline-block;
+
+}
+
+/* Tooltip text */
+.tooltip .tooltiptext {
+  visibility: hidden;
+  
+  background-color: black;
+  color: #fff;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+ 
+  /* Position the tooltip text - see examples below! */
+  position: absolute;
+  z-index: 3000;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+
+}
+
+
+/* Show the tooltip text when you mouse over the tooltip container */
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+}
+
+#mainChartSettingsOverlay[hidden] {
+  display: none !important;
+}
+#mainChartSettingsOverlay:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 7000;
+  background: rgba(15, 23, 42, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#mainChartSettingsPanel {
+  background: #fff;
+  border: 1px solid #767676;
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+  padding: 16px;
+  width: min(92vw, 460px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+.settings-modal-subtitle {
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.4;
+}
+.settings-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+.settings-modal-field input {
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+.settings-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.settings-modal-actions button {
+  border: 1px solid #767676;
+  background: #f8f8f8;
+  color: #202020;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+
+
+</style>
+
+<script>
+(function () {
+  const sectionBar = document.getElementById("sectionBar");
+  const resetPanelsBtn = document.getElementById("resetPanelsBtn");
+  const topRow = document.querySelector(".top-row");
+  const bottomRow = document.querySelector(".bottom-row");
+  const topWrap = document.querySelector(".top-row-wrap");
+  const bottomWrap = document.querySelector(".bottom-row-wrap");
+  const handleMainBottom = document.querySelector('[data-handle="main-bottom"]');
+
+  const topPanels = [
+    document.querySelector('[data-panel="panel-data"]'),
+    document.querySelector('[data-panel="panel-splom"]'),
+    document.querySelector('[data-panel="panel-main"]')
+  ];
+  const bottomPanels = [
+    document.querySelector('[data-panel="panel-selection"]'),
+    document.querySelector('[data-panel="panel-history"]')
+  ];
+
+  const state = {
+    topSizes: [24, 46, 30],
+    bottomSizes: [70, 30],
+    topHeight: 70
+  };
+
+  const COLLAPSED = 14;
+  const MIN_SIZE = 10;
+  let resizeNotifyScheduled = false;
+  let cancelActiveDrag = null;
+
+  function notifyChartsResize() {
+    if (resizeNotifyScheduled) return;
+    resizeNotifyScheduled = true;
+    requestAnimationFrame(() => {
+      resizeNotifyScheduled = false;
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  function setPanelToggleButtons() {
+    sectionBar.querySelectorAll("button[data-panel-toggle]").forEach((btn) => {
+      const name = btn.getAttribute("data-panel-toggle");
+      const panel = document.querySelector('[data-panel="' + name + '"]');
+      if (!panel) return;
+      const hidden = panel.classList.contains("panel-hidden");
+      btn.classList.toggle("active-layout", !hidden);
+      btn.setAttribute("aria-pressed", (!hidden).toString());
+    });
+  }
+
+  function normalize(arr, indices) {
+    const sum = indices.reduce((a, i) => a + arr[i], 0);
+    if (sum <= 0) {
+      const even = 100 / indices.length;
+      indices.forEach((i) => (arr[i] = even));
+      return;
+    }
+    indices.forEach((i) => (arr[i] = (arr[i] / sum) * 100));
+  }
+
+  function visibleIndices(panels) {
+    const out = [];
+    panels.forEach((p, i) => {
+      if (!p.classList.contains("panel-hidden")) out.push(i);
+    });
+    return out;
+  }
+
+  function countVisiblePanels(panels) {
+    return visibleIndices(panels).length;
+  }
+
+  function applyRowSizes(rowEl, panels, sizes, skipNormalize) {
+    if (!rowEl) return;
+    const vis = visibleIndices(panels);
+    if (!vis.length) {
+      rowEl.style.display = "none";
+      return;
+    }
+    rowEl.style.display = "flex";
+    if (!skipNormalize) {
+      normalize(sizes, vis);
+    }
+    panels.forEach((panel, i) => {
+      if (panel.classList.contains("panel-hidden")) {
+        panel.style.display = "none";
+        panel.style.flex = "";
+        return;
+      }
+      panel.style.display = "flex";
+      const collapsed = panel.classList.contains("panel-collapsed");
+      if (collapsed) {
+        panel.style.flex = "0 0 " + COLLAPSED + "px";
+      } else {
+        panel.style.flex = "1 1 " + sizes[i] + "%";
+      }
+    });
+  }
+
+  function applyLayout(skipNormalize) {
+    const topVisible = countVisiblePanels(topPanels);
+    const bottomVisible = countVisiblePanels(bottomPanels);
+
+    if (topVisible === 0) {
+      topWrap.style.display = "none";
+      topWrap.style.flex = "0 0 0";
+      handleMainBottom.style.display = bottomVisible > 0 ? "block" : "none";
+      bottomWrap.style.flex = "1 1 auto";
+    } else {
+      topWrap.style.display = "flex";
+      topWrap.style.flex = "0 0 " + state.topHeight + "%";
+      handleMainBottom.style.display = bottomVisible > 0 ? "block" : "none";
+      bottomWrap.style.flex = "1 1 auto";
+      applyRowSizes(topRow, topPanels, state.topSizes, skipNormalize);
+    }
+
+    if (bottomVisible === 0) {
+      bottomWrap.style.display = "none";
+      bottomWrap.style.flex = "0 0 0";
+      if (topVisible > 0) {
+        topWrap.style.flex = "1 1 auto";
+        handleMainBottom.style.display = "none";
+      }
+    } else {
+      bottomWrap.style.display = "flex";
+      applyRowSizes(bottomRow, bottomPanels, state.bottomSizes, skipNormalize);
+    }
+
+    setHandleVisibility();
+    setPanelToggleButtons();
+  }
+
+  function setHandleVisibility() {
+    const [d, s, m] = topPanels;
+    const [sel, his] = bottomPanels;
+    document.querySelector('[data-handle="top-data-splom"]').style.display =
+      (!d.classList.contains("panel-hidden") && !s.classList.contains("panel-hidden")) ? "block" : "none";
+    document.querySelector('[data-handle="top-splom-main"]').style.display =
+      (!s.classList.contains("panel-hidden") && !m.classList.contains("panel-hidden")) ? "block" : "none";
+    document.querySelector('[data-handle="bottom-selection-history"]').style.display =
+      (!sel.classList.contains("panel-hidden") && !his.classList.contains("panel-hidden")) ? "block" : "none";
+  }
+
+  function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+  function dragBetween(rowEl, panels, sizes, leftIndex, rightIndex, isVerticalHandle, eStart, onDone) {
+    if (cancelActiveDrag) {
+      cancelActiveDrag();
+      cancelActiveDrag = null;
+    }
+    if (panels[leftIndex].classList.contains("panel-hidden") || panels[rightIndex].classList.contains("panel-hidden")) return;
+    const leftRect = panels[leftIndex].getBoundingClientRect();
+    const rightRect = panels[rightIndex].getBoundingClientRect();
+    let leftPx = isVerticalHandle ? leftRect.width : leftRect.height;
+    let rightPx = isVerticalHandle ? rightRect.width : rightRect.height;
+    const pairTotal = Math.max(1, leftPx + rightPx);
+    const pairPctTotal = Math.max(1, sizes[leftIndex] + sizes[rightIndex]);
+    const minPx = COLLAPSED;
+    let last = isVerticalHandle ? eStart.clientX : eStart.clientY;
+
+    function move(ev) {
+      const now = isVerticalHandle ? ev.clientX : ev.clientY;
+      const delta = now - last;
+      last = now;
+      leftPx = clamp(leftPx + delta, minPx, pairTotal - minPx);
+      rightPx = pairTotal - leftPx;
+      const leftRatio = leftPx / pairTotal;
+      sizes[leftIndex] = pairPctTotal * leftRatio;
+      sizes[rightIndex] = pairPctTotal * (1 - leftRatio);
+      applyLayout(true);
+    }
+    function up() {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      if (cancelActiveDrag === up) cancelActiveDrag = null;
+      applyLayout(false);
+      notifyChartsResize();
+      if (onDone) onDone();
+    }
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    cancelActiveDrag = up;
+  }
+
+  function attachHandle(selector, rowEl, panels, sizes, leftIndex, rightIndex, vertical) {
+    const h = document.querySelector(selector);
+    h.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      h.classList.add("dragging");
+      dragBetween(rowEl, panels, sizes, leftIndex, rightIndex, vertical, e, function () {
+        h.classList.remove("dragging");
+      });
+    });
+  }
+
+  attachHandle('[data-handle="top-data-splom"]', topRow, topPanels, state.topSizes, 0, 1, true);
+  attachHandle('[data-handle="top-splom-main"]', topRow, topPanels, state.topSizes, 1, 2, true);
+  attachHandle('[data-handle="bottom-selection-history"]', bottomRow, bottomPanels, state.bottomSizes, 0, 1, true);
+
+  handleMainBottom.addEventListener("mousedown", function (e) {
+    if (cancelActiveDrag) {
+      cancelActiveDrag();
+      cancelActiveDrag = null;
+    }
+    e.preventDefault();
+    handleMainBottom.classList.add("dragging");
+    const rect = document.querySelector(".grid-container").getBoundingClientRect();
+    let topPx = topWrap.getBoundingClientRect().height;
+    let bottomPx = bottomWrap.getBoundingClientRect().height;
+    let lastY = e.clientY;
+    const minPx = 60;
+    function move(ev) {
+      const dy = ev.clientY - lastY;
+      lastY = ev.clientY;
+      topPx = clamp(topPx + dy, minPx, rect.height - minPx);
+      bottomPx = clamp(bottomPx - dy, minPx, rect.height - minPx);
+      state.topHeight = (topPx / rect.height) * 100;
+      applyLayout();
+    }
+    function up() {
+      handleMainBottom.classList.remove("dragging");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      if (cancelActiveDrag === up) cancelActiveDrag = null;
+      notifyChartsResize();
+    }
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    cancelActiveDrag = up;
+  });
+
+  function togglePanel(name) {
+    const panel = document.querySelector('[data-panel="' + name + '"]');
+    if (!panel) return;
+    panel.classList.toggle("panel-hidden");
+    panel.classList.remove("panel-collapsed");
+    applyLayout();
+    notifyChartsResize();
+  }
+
+  function resetPanelStyles() {
+    [...topPanels, ...bottomPanels].forEach((p) => {
+      p.classList.remove("panel-hidden", "panel-collapsed");
+      p.style.display = "";
+      p.style.flex = "";
+    });
+    topWrap.style.display = "";
+    topWrap.style.flex = "";
+    bottomWrap.style.display = "";
+    bottomWrap.style.flex = "";
+    if (topRow) {
+      topRow.style.display = "";
+    }
+    if (bottomRow) {
+      bottomRow.style.display = "";
+    }
+  }
+
+  sectionBar.addEventListener("click", function (e) {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const panelName = btn.getAttribute("data-panel-toggle");
+    if (panelName) togglePanel(panelName);
+    if (btn === resetPanelsBtn) {
+      if (cancelActiveDrag) {
+        cancelActiveDrag();
+        cancelActiveDrag = null;
+      }
+      resetPanelStyles();
+      state.topSizes.splice(0, state.topSizes.length, 24, 46, 30);
+      state.bottomSizes.splice(0, state.bottomSizes.length, 70, 30);
+      state.topHeight = 70;
+      applyLayout();
+      notifyChartsResize();
+    }
+  });
+
+  applyLayout();
+  setPanelToggleButtons();
+  window.addEventListener("resize", function () {
+    applyLayout();
+  });
+})();
+</script>
+
+
+</html>

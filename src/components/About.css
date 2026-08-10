@@ -1,0 +1,31 @@
+.about {
+  background-color: var(--color-blush);
+}
+
+.about__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: start;
+}
+
+.about__title {
+  margin-bottom: 0;
+}
+
+.about__text {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--color-muted);
+}
+
+.about__text p + p {
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .about__grid {
+    grid-template-columns: 1fr;
+  }
+}

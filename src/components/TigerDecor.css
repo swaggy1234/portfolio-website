@@ -1,0 +1,34 @@
+.tiger-decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.tiger-decor__cat {
+  position: absolute;
+  color: var(--color-tiger-stroke);
+  opacity: var(--tiger-opacity, 0.18);
+}
+
+.tiger-decor__cat--left {
+  left: clamp(-2rem, 2vw, 3rem);
+  bottom: 5%;
+  width: clamp(80px, 12vw, 140px);
+  height: auto;
+}
+
+.tiger-decor__cat--right {
+  right: clamp(-2rem, 2vw, 3rem);
+  top: 8%;
+  width: clamp(80px, 12vw, 140px);
+  height: auto;
+}
+
+@media (max-width: 768px) {
+  .tiger-decor__cat {
+    opacity: 0.1;
+    width: clamp(60px, 16vw, 90px);
+  }
+}

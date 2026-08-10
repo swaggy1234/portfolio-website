@@ -1,0 +1,135 @@
+.hero {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: block;
+  background-color: var(--color-blush);
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  overflow: hidden;
+}
+
+.hero__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  position: relative;
+  z-index: 10;
+}
+
+.hero__logo {
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  line-height: 1;
+}
+
+.hero__menu {
+  width: 32px;
+  height: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0;
+  z-index: 20;
+}
+
+.hero__menu span {
+  display: block;
+  height: 1px;
+  background-color: var(--color-wine);
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.hero__menu span:first-child {
+  width: 100%;
+}
+
+.hero__menu span:last-child {
+  width: 60%;
+  align-self: flex-end;
+}
+
+.hero__menu--open span:first-child {
+  transform: translateY(9px) rotate(45deg);
+  width: 100%;
+}
+
+.hero__menu--open span:last-child {
+  transform: translateY(-10px) rotate(-45deg);
+  width: 100%;
+}
+
+.hero__nav {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(320px, 85vw);
+  height: 100vh;
+  background: var(--color-blush);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2rem;
+  padding: 3rem;
+  transform: translateX(100%);
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 15;
+}
+
+.hero__nav--open {
+  transform: translateX(0);
+}
+
+.hero__nav button {
+  font-family: var(--font-serif);
+  font-size: 1.8rem;
+  font-weight: 300;
+  text-align: left;
+  letter-spacing: 0.02em;
+  transition: opacity 0.2s;
+}
+
+.hero__nav button:hover {
+  opacity: 0.5;
+}
+
+.hero__content {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5rem 1.5rem 4rem;
+  z-index: 1;
+  box-sizing: border-box;
+}
+
+.hero__content-motion {
+  width: min(100%, 64rem);
+  transform-origin: center center;
+}
+
+.hero__arrow {
+  position: absolute;
+  bottom: clamp(2rem, 5vh, 3.5rem);
+  left: 50%;
+  margin-left: -10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-wine);
+  z-index: 5;
+  pointer-events: auto;
+}
+
+.hero__arrow-icon {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__arrow {
+    animation: none;
+  }
+}

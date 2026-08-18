@@ -11,6 +11,44 @@
   pointer-events: auto;
 }
 
+.layout-edit-panel__section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  max-width: min(20rem, 92vw);
+}
+
+.layout-edit-panel__label {
+  margin: 0;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 0.65rem;
+  color: var(--color-wine, #3d0f24);
+  text-align: right;
+  line-height: 1.4;
+}
+
+.layout-edit-panel__screen {
+  margin: 0;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 0.62rem;
+  color: rgba(61, 15, 36, 0.75);
+  text-align: right;
+}
+
+.layout-edit-panel__code {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  max-width: 100%;
+  overflow-x: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.6rem;
+  line-height: 1.45;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(61, 15, 36, 0.15);
+  color: var(--color-wine, #3d0f24);
+}
+
 .layout-edit-panel__actions {
   display: flex;
   flex-wrap: wrap;

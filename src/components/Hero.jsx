@@ -10,14 +10,23 @@ import {
 import { siteConfig } from '../data/siteContent';
 import {
   HERO_BACKGROUND,
+  HERO_BACKGROUND_COLOR,
+  HERO_LAYOUT,
+  HERO_TEXT_THEME,
+  HERO_TEXT_ACCENT_PALETTE,
+  HERO_VIDEO,
   LAYOUT_EDIT_MODE,
+  LAYOUT_EDIT_STICKERS,
+  LAYOUT_EDIT_VIDEO,
   STICKERS,
   STICKER_LAYOUTS,
   STICKER_TEMPLATES,
+  STICKER_VIEWPORT_LOCK,
   resolveSticker,
 } from '../data/layoutEdit';
 import InteractiveText from './InteractiveText';
 import EditableSticker from './EditableSticker';
+import HeroVideo from './HeroVideo';
 import LayoutEditPanel from './LayoutEditPanel';
 import './Hero.css';
 
@@ -37,9 +46,12 @@ function mergeLayout(stickerId, stickerType, liveLayouts) {
 
 export default function Hero({ stageRef }) {
   const heroElRef = useRef(null);
+  const videoCanvasRef = useRef(null);
+  const videoWrapRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [arrowVisible, setArrowVisible] = useState(true);
   const [liveLayouts, setLiveLayouts] = useState({});
+  const [liveVideoLayout, setLiveVideoLayout] = useState(null);
   const [editStickers, setEditStickers] = useState(() => [...STICKERS]);
 
   const rawPointerX = useMotionValue(0);
@@ -108,19 +120,41 @@ export default function Hero({ stageRef }) {
     }));
   };
 
-  const contentMotionStyle = {
-    y: contentY,
-    opacity: contentOpacity,
-    scale: contentScale,
-  };
+  const contentMotionStyle = HERO_VIDEO
+    ? undefined
+    : {
+        y: contentY,
+        opacity: contentOpacity,
+        scale: contentScale,
+      };
 
-  const stickerList = LAYOUT_EDIT_MODE ? editStickers : STICKERS;
+  const stickerEditMode = LAYOUT_EDIT_MODE && LAYOUT_EDIT_STICKERS;
+  const videoEditMode = LAYOUT_EDIT_MODE && LAYOUT_EDIT_VIDEO;
+  const stickerList = stickerEditMode ? editStickers : STICKERS;
+  const layoutEditActive = videoEditMode || stickerEditMode;
 
-  const renderSticker = (sticker, editMode) => {
+  /** Saved layout from file — don't feed live drag values back in or the video jitters */
+  const heroVideoLayout = HERO_VIDEO?.layout;
+
+  const heroClassName = [
+    'hero',
+    HERO_TEXT_THEME === 'dark' ? 'hero--text-dark' : '',
+    HERO_LAYOUT === 'split' ? 'hero--split' : '',
+    HERO_LAYOUT === 'centered' ? 'hero--centered' : '',
+    HERO_VIDEO ? 'hero--allow-overflow hero--video-hero' : '',
+    LAYOUT_EDIT_MODE && layoutEditActive ? 'hero--layout-edit' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const renderSticker = (sticker, editing) => {
     const resolved = resolveSticker(sticker);
     if (!resolved) return null;
 
-    const layout = mergeLayout(sticker.id, sticker.type, liveLayouts);
+    /* During edit, use saved layout only — liveLayouts is for the copy panel */
+    const layout = editing
+      ? STICKER_LAYOUTS[sticker.id] || resolved.layout
+      : mergeLayout(sticker.id, sticker.type, liveLayouts);
 
     return (
       <EditableSticker
@@ -129,13 +163,13 @@ export default function Hero({ stageRef }) {
         className={resolved.className}
         src={resolved.src}
         layout={layout}
-        editMode={editMode}
-        containerRef={heroElRef}
+        editMode={editing}
+        viewportLock={STICKER_VIEWPORT_LOCK}
         onLayoutChange={handleLayoutChange}
         motionDepth={resolved.motionDepth ?? 1}
-        pointerX={editMode ? undefined : pointerX}
-        pointerY={editMode ? undefined : pointerY}
-        scrollProgress={editMode ? undefined : scrollYProgress}
+        pointerX={editing ? undefined : pointerX}
+        pointerY={editing ? undefined : pointerY}
+        scrollProgress={editing ? undefined : scrollYProgress}
       />
     );
   };
@@ -143,9 +177,12 @@ export default function Hero({ stageRef }) {
   return (
     <section
       ref={heroElRef}
-      className={`hero${LAYOUT_EDIT_MODE ? ' hero--layout-edit' : ''}`}
+      className={heroClassName}
       id="hero"
-      style={{ backgroundImage: `url(${HERO_BACKGROUND})` }}
+      style={{
+        ...(HERO_BACKGROUND ? { backgroundImage: `url(${HERO_BACKGROUND})` } : {}),
+        backgroundColor: HERO_BACKGROUND_COLOR,
+      }}
       onPointerMove={LAYOUT_EDIT_MODE ? undefined : handlePointerMove}
       onPointerLeave={LAYOUT_EDIT_MODE ? undefined : handlePointerLeave}
     >
@@ -183,21 +220,67 @@ export default function Hero({ stageRef }) {
         </nav>
       </header>
 
+      {!videoEditMode && HERO_VIDEO && heroVideoLayout ? (
+        <HeroVideo
+          src={HERO_VIDEO.src}
+          layout={heroVideoLayout}
+          className={HERO_VIDEO.className}
+          keyWhite={HERO_VIDEO.keyWhite ?? true}
+          blendMode={HERO_VIDEO.blendMode}
+          editMode={false}
+          containerRef={heroElRef}
+          playbackRate={HERO_VIDEO.playbackRate ?? 1}
+          loop={HERO_VIDEO.loop ?? true}
+          overlayCanvasRef={videoCanvasRef}
+          overlayWrapRef={videoWrapRef}
+          onLayoutChange={setLiveVideoLayout}
+        />
+      ) : null}
+
       <div className="hero__content">
-        <motion.div className="hero__content-motion" style={contentMotionStyle}>
-          <InteractiveText lines={siteConfig.heroStatement} />
-        </motion.div>
+        {HERO_VIDEO ? (
+          <div className="hero__content-motion">
+            <InteractiveText
+              lines={siteConfig.heroStatement}
+              baseColor="var(--color-wine)"
+              accentPalette={HERO_TEXT_ACCENT_PALETTE}
+              videoOverlapCanvasRef={videoCanvasRef}
+              videoOverlapWrapRef={videoWrapRef}
+            />
+          </div>
+        ) : (
+          <motion.div className="hero__content-motion" style={contentMotionStyle}>
+            <InteractiveText lines={siteConfig.heroStatement} />
+          </motion.div>
+        )}
       </div>
 
-      {LAYOUT_EDIT_MODE ? (
+      {videoEditMode && HERO_VIDEO && heroVideoLayout ? (
+        <HeroVideo
+          src={HERO_VIDEO.src}
+          layout={heroVideoLayout}
+          className={HERO_VIDEO.className}
+          keyWhite={HERO_VIDEO.keyWhite ?? true}
+          blendMode={HERO_VIDEO.blendMode}
+          editMode
+          containerRef={heroElRef}
+          playbackRate={HERO_VIDEO.playbackRate ?? 1}
+          loop={HERO_VIDEO.loop ?? true}
+          overlayCanvasRef={videoCanvasRef}
+          overlayWrapRef={videoWrapRef}
+          onLayoutChange={setLiveVideoLayout}
+        />
+      ) : null}
+
+      {stickerEditMode ? (
         <div className="hero__stickers hero__stickers--edit">
           {stickerList.map((sticker) => renderSticker(sticker, true))}
         </div>
-      ) : (
+      ) : STICKERS.length > 0 ? (
         <div className="hero__stickers">
           {stickerList.map((sticker) => renderSticker(sticker, false))}
         </div>
-      )}
+      ) : null}
 
       <motion.a
         href="#work"
@@ -232,7 +315,9 @@ export default function Hero({ stageRef }) {
       <LayoutEditPanel
         stickers={editStickers}
         layouts={liveLayouts}
-        editMode={LAYOUT_EDIT_MODE}
+        videoLayout={liveVideoLayout ?? HERO_VIDEO?.layout}
+        editMode={layoutEditActive}
+        editVideo={videoEditMode}
         onAddFlower={handleAddFlower}
       />
     </section>

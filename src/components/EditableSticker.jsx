@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   motion,
   useMotionValue,
@@ -6,36 +6,23 @@ import {
   useSpring,
 } from 'framer-motion';
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
+import {
+  getHeroOrigin,
+  isViewportLayout,
+  toBox,
+  toBoxFromViewport,
+  toPercent,
+  toViewportFromBox,
+} from '../utils/heroLayout';
 import './EditableSticker.css';
-
-function toBox(percents, aspectRatio, parentWidth, parentHeight) {
-  const width = (percents.widthPercent / 100) * parentWidth;
-  const height = width / aspectRatio;
-  return {
-    x: (percents.xPercent / 100) * parentWidth,
-    y: (percents.yPercent / 100) * parentHeight,
-    width,
-    height,
-  };
-}
-
-function toPercent(box, parentWidth, parentHeight) {
-  if (!parentWidth || !parentHeight) {
-    return { xPercent: 0, yPercent: 0, widthPercent: 0 };
-  }
-  return {
-    xPercent: +((box.x / parentWidth) * 100).toFixed(2),
-    yPercent: +((box.y / parentHeight) * 100).toFixed(2),
-    widthPercent: +((box.width / parentWidth) * 100).toFixed(2),
-  };
-}
 
 function normalizeAngle(deg) {
   const wrapped = ((deg % 360) + 360) % 360;
   return wrapped > 180 ? wrapped - 360 : wrapped;
 }
 
-function clampBox(box, parentWidth, parentHeight) {
+function clampBox(box, parentWidth, parentHeight, viewportLock) {
+  if (viewportLock) return box;
   const minY = -parentHeight * 0.35;
   const maxY = parentHeight - box.height;
   const maxX = parentWidth - box.width;
@@ -47,9 +34,8 @@ function clampBox(box, parentWidth, parentHeight) {
 }
 
 /**
- * Reusable decorative sticker.
- * Locked mode: subtle editorial life (parallax, scroll, hover, drift).
- * Edit mode: drag / resize / rotate via pointer (no react-rnd).
+ * Decorative sticker — viewport-locked or hero-relative.
+ * Edit mode: drag / resize / rotate. Locked mode: subtle parallax drift.
  */
 export default function EditableSticker({
   id,
@@ -58,6 +44,7 @@ export default function EditableSticker({
   className = '',
   layout,
   editMode = false,
+  viewportLock = false,
   onLayoutChange,
   containerRef,
   motionDepth = 1,
@@ -66,11 +53,15 @@ export default function EditableSticker({
   scrollProgress,
 }) {
   const aspectRatio = layout.aspectRatio || 1;
-  const parentRectRef = useRef(null);
+  const parentRef = useRef(null);
   const rotationRef = useRef(layout.rotation || 0);
+  const editingRef = useRef(false);
   const [parentSize, setParentSize] = useState({ width: 0, height: 0 });
   const [hovered, setHovered] = useState(false);
+  const [lockedBox, setLockedBox] = useState(null);
   const reducedMotion = usePrefersReducedMotion();
+
+  const viewportLayout = viewportLock && isViewportLayout(layout);
 
   const [percents, setPercents] = useState({
     xPercent: layout.xPercent,
@@ -84,51 +75,92 @@ export default function EditableSticker({
   const baseRotation = layout.rotation || 0;
   rotationRef.current = rotation;
 
+  /* Only sync from props when not actively editing — prevents drag jitter */
   useEffect(() => {
+    if (editMode && editingRef.current) return;
     setPercents({
       xPercent: layout.xPercent,
       yPercent: layout.yPercent,
       widthPercent: layout.widthPercent,
     });
     setRotation(layout.rotation || 0);
+    rotationRef.current = layout.rotation || 0;
     setLiveBox(null);
-  }, [layout.xPercent, layout.yPercent, layout.widthPercent, layout.rotation]);
+  }, [
+    editMode,
+    layout.xPercent,
+    layout.yPercent,
+    layout.widthPercent,
+    layout.rotation,
+    layout.unit,
+  ]);
+
+  const measureParent = () => {
+    const parent = containerRef?.current;
+    if (!parent) return;
+    parentRef.current = parent;
+    setParentSize({ width: parent.clientWidth, height: parent.clientHeight });
+    if (!editMode && viewportLayout) {
+      setLockedBox(toBoxFromViewport(layout, aspectRatio, parent));
+    }
+  };
+
+  useLayoutEffect(() => {
+    measureParent();
+  }, [editMode, viewportLayout, layout.xPercent, layout.yPercent, layout.widthPercent, aspectRatio]);
 
   useEffect(() => {
     const parent = containerRef?.current;
-    if (!parent || !editMode) return undefined;
+    if (!parent) return undefined;
+    parentRef.current = parent;
 
-    const measure = () => {
-      setParentSize({
-        width: parent.clientWidth,
-        height: parent.clientHeight,
-      });
-      parentRectRef.current = parent.getBoundingClientRect();
-    };
-
-    measure();
-    const observer = new ResizeObserver(measure);
+    const onResize = () => measureParent();
+    const observer = new ResizeObserver(onResize);
     observer.observe(parent);
-    return () => observer.disconnect();
-  }, [containerRef, editMode]);
+    window.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef, editMode, viewportLayout]);
 
   const box = useMemo(() => {
+    const parent = parentRef.current;
     if (!parentSize.width || !parentSize.height) {
       return { x: 0, y: 0, width: 0, height: 0 };
     }
+    if (viewportLayout && parent) {
+      return toBoxFromViewport(
+        { ...percents, unit: 'viewport' },
+        aspectRatio,
+        parent
+      );
+    }
     return toBox(percents, aspectRatio, parentSize.width, parentSize.height);
-  }, [percents, aspectRatio, parentSize]);
+  }, [percents, aspectRatio, parentSize, viewportLayout]);
 
   const activeBox = liveBox ?? box;
 
   const publish = (nextBox, nextRotation = rotationRef.current) => {
-    if (!parentSize.width || !parentSize.height) return;
-    const clamped = clampBox(nextBox, parentSize.width, parentSize.height);
-    const nextPercents = toPercent(clamped, parentSize.width, parentSize.height);
+    const parent = parentRef.current;
+    if (!parentSize.width || !parent) return;
+
+    editingRef.current = true;
+    const clamped = clampBox(nextBox, parentSize.width, parentSize.height, viewportLock);
+
+    const nextPercents = viewportLock
+      ? { ...toViewportFromBox(clamped, parent), unit: 'viewport' }
+      : toPercent(clamped, parentSize.width, parentSize.height);
+
     setPercents(nextPercents);
     setRotation(nextRotation);
     rotationRef.current = nextRotation;
     setLiveBox(null);
+
     onLayoutChange?.(id, {
       ...nextPercents,
       rotation: nextRotation,
@@ -136,17 +168,6 @@ export default function EditableSticker({
       aspectRatio,
     });
   };
-
-  useEffect(() => {
-    if (!editMode || !parentSize.width || !onLayoutChange) return;
-    onLayoutChange(id, {
-      ...percents,
-      rotation,
-      flipX,
-      aspectRatio,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, parentSize.width, parentSize.height]);
 
   /* --- subtle life (locked only) --- */
   const driftX = useMotionValue(0);
@@ -211,36 +232,26 @@ export default function EditableSticker({
     event.preventDefault();
     event.stopPropagation();
 
-    const start = {
-      x: event.clientX,
-      y: event.clientY,
-      box: { ...activeBox },
-    };
+    editingRef.current = true;
+    const start = { x: event.clientX, y: event.clientY, box: { ...activeBox } };
 
     const onMove = (ev) => {
-      const next = clampBox(
-        {
-          ...start.box,
-          x: start.box.x + ev.clientX - start.x,
-          y: start.box.y + ev.clientY - start.y,
-        },
-        parentSize.width,
-        parentSize.height
-      );
-      setLiveBox(next);
+      setLiveBox({
+        ...start.box,
+        x: start.box.x + ev.clientX - start.x,
+        y: start.box.y + ev.clientY - start.y,
+      });
     };
 
     const onUp = (ev) => {
-      const next = clampBox(
+      publish(
         {
           ...start.box,
           x: start.box.x + ev.clientX - start.x,
           y: start.box.y + ev.clientY - start.y,
         },
-        parentSize.width,
-        parentSize.height
+        rotationRef.current
       );
-      publish(next, rotationRef.current);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
@@ -252,12 +263,14 @@ export default function EditableSticker({
   const startRotate = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    editingRef.current = true;
 
-    const parentRect = parentRectRef.current;
-    if (!parentRect) return;
+    const parent = parentRef.current;
+    if (!parent) return;
 
-    const centerX = parentRect.left + activeBox.x + activeBox.width / 2;
-    const centerY = parentRect.top + activeBox.y + activeBox.height / 2;
+    const origin = getHeroOrigin(parent);
+    const centerX = origin.left + activeBox.x + activeBox.width / 2;
+    const centerY = origin.top + activeBox.y + activeBox.height / 2;
 
     const onMove = (ev) => {
       const angle = (Math.atan2(ev.clientY - centerY, ev.clientX - centerX) * 180) / Math.PI;
@@ -279,33 +292,26 @@ export default function EditableSticker({
   const startResize = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    editingRef.current = true;
 
-    const start = {
-      x: event.clientX,
-      y: event.clientY,
-      width: activeBox.width,
-    };
+    const start = { x: event.clientX, width: activeBox.width };
 
     const onMove = (ev) => {
-      const delta = ev.clientX - start.x;
-      const nextWidth = Math.max(80, start.width + delta);
-      const nextHeight = nextWidth / aspectRatio;
+      const nextWidth = Math.max(80, start.width + ev.clientX - start.x);
       setLiveBox({
         ...activeBox,
         width: nextWidth,
-        height: nextHeight,
+        height: nextWidth / aspectRatio,
       });
     };
 
-    const onUp = (ev) => {
-      const delta = ev.clientX - start.x;
-      const nextWidth = Math.max(80, start.width + delta);
-      const nextHeight = nextWidth / aspectRatio;
+    const onUp = () => {
+      const nextWidth = Math.max(80, start.width + ev.clientX - start.x);
       publish(
         {
           ...activeBox,
           width: nextWidth,
-          height: nextHeight,
+          height: nextWidth / aspectRatio,
         },
         rotationRef.current
       );
@@ -318,14 +324,25 @@ export default function EditableSticker({
   };
 
   if (!editMode) {
-    const lockedStyle = {
-      left: `${layout.xPercent}%`,
-      top: `${layout.yPercent}%`,
-      width: `${layout.widthPercent}%`,
-      aspectRatio: `${aspectRatio}`,
-      height: 'auto',
-      transformOrigin: 'center center',
-    };
+    const lockedStyle = viewportLayout && lockedBox
+      ? {
+          left: lockedBox.x,
+          top: lockedBox.y,
+          width: lockedBox.width,
+          aspectRatio: `${aspectRatio}`,
+          height: 'auto',
+          transformOrigin: 'center center',
+        }
+      : {
+          left: `${layout.xPercent}%`,
+          top: `${layout.yPercent}%`,
+          width: `${layout.widthPercent}%`,
+          aspectRatio: `${aspectRatio}`,
+          height: 'auto',
+          transformOrigin: 'center center',
+        };
+
+    if (viewportLayout && !lockedBox) return null;
 
     const lockedImg = (
       <img

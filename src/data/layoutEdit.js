@@ -1,101 +1,30 @@
 /**
  * LAYOUT EDIT MODE
- * Set LAYOUT_EDIT_MODE to true to drag/resize/rotate stickers in the browser.
- * Set to false to lock final positions (no handles, no panel).
+ * Set to true to drag/resize the hero video (or stickers) in the browser.
+ * Set to false when you're happy with placement.
  *
- * Values are PERCENTAGES of the hero size so the layout keeps the same
- * ratio on every screen.
+ * Hero look comes from heroDesign.js + heroDesigns/*.js
  */
 
+import { getActiveHeroDesign } from './heroDesign';
+
+/** Drag the hero video in the browser, then paste layout from the panel */
 export const LAYOUT_EDIT_MODE = false;
+export const LAYOUT_EDIT_VIDEO = false;
+export const LAYOUT_EDIT_STICKERS = false;
 
-export const HERO_BACKGROUND = '/images/hero-background.png';
+const active = getActiveHeroDesign();
 
-/** Sticker type templates — used when adding new flowers in edit mode */
-export const STICKER_TEMPLATES = {
-  tiger: {
-    src: '/images/Firefly.png',
-    className: 'hero__sticker hero__sticker--tiger',
-    aspectRatio: 736 / 1104,
-    motionDepth: 1,
-  },
-  flower: {
-    src: '/images/flower.png',
-    className: 'hero__sticker hero__sticker--flower',
-    aspectRatio: 426 / 589,
-    motionDepth: 0.55,
-  },
-  flower2: {
-    src: '/images/flower-2.png',
-    className: 'hero__sticker hero__sticker--flower',
-    aspectRatio: 360 / 393,
-    motionDepth: 0.5,
-  },
-};
-
-/**
- * All stickers on the hero (tigers + flowers).
- * type → key in STICKER_TEMPLATES
- */
-export const STICKERS = [
-  { id: 'tiger', type: 'tiger' },
-  { id: 'tiger2', type: 'tiger' },
-  { id: 'flower-1', type: 'flower' },
-  { id: 'flower-2', type: 'flower2' },
-  { id: 'flower-3', type: 'flower' },
-  { id: 'flower2-1786547579289', type: 'flower2' },
-];
-
-export const STICKER_LAYOUTS = {
-  tiger: {
-    xPercent: 0.00,
-    yPercent: 34.74,
-    widthPercent: 25.79,
-    rotation: 25,
-    flipX: false,
-    aspectRatio: 0.666667,
-  },
-  tiger2: {
-    xPercent: 71.43,
-    yPercent: -9.41,
-    widthPercent: 25.22,
-    rotation: 115,
-    flipX: true,
-    aspectRatio: 0.666667,
-  },
-  'flower-1': {
-    xPercent: 83.98,
-    yPercent: 39.32,
-    widthPercent: 14.00,
-    rotation: -12,
-    flipX: false,
-    aspectRatio: 0.72326,
-  },
-  'flower-2': {
-    xPercent: 0.00,
-    yPercent: 21.33,
-    widthPercent: 12.00,
-    rotation: 18,
-    flipX: false,
-    aspectRatio: 0.916031,
-  },
-  'flower-3': {
-    xPercent: 61.07,
-    yPercent: -3.26,
-    widthPercent: 16.00,
-    rotation: 6,
-    flipX: true,
-    aspectRatio: 0.72326,
-  },
-  'flower2-1786547579289': {
-    xPercent: 16.99,
-    yPercent: 77.90,
-    widthPercent: 12.00,
-    rotation: -20,
-    flipX: false,
-    aspectRatio: 0.916031,
-  },
-};
+export const HERO_BACKGROUND = active.background;
+export const HERO_BACKGROUND_COLOR = active.backgroundColor;
+export const HERO_TEXT_THEME = active.textTheme ?? 'light';
+export const HERO_LAYOUT = active.layout ?? 'centered';
+export const HERO_VIDEO = active.heroVideo ?? null;
+export const HERO_TEXT_ACCENT_PALETTE = active.textAccentPalette ?? null;
+export const STICKER_TEMPLATES = active.stickerTemplates;
+export const STICKERS = active.stickers;
+export const STICKER_LAYOUTS = active.stickerLayouts;
+export const STICKER_VIEWPORT_LOCK = active.stickerViewportLock ?? false;
 
 /** Resolve a sticker entry into render props */
 export function resolveSticker(sticker) {

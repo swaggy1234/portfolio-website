@@ -1,12 +1,6 @@
-import { useRef, useCallback, useMemo } from 'react';
+import { useRef, useCallback, useMemo, useEffect } from 'react';
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
 import './InteractiveText.css';
-
-/**
- * INTERACTIVE LETTER EFFECT
- * Default: white. On cursor proximity, letters shift through the color palette,
- * then fade back to white after ~1 second.
- */
 
 const COLOR_PALETTE = [
   'var(--color-cobalt)',
@@ -17,25 +11,78 @@ const COLOR_PALETTE = [
   'var(--color-green)',
 ];
 
-const DEFAULT_COLOR = '#ffffff';
 const INFLUENCE_RADIUS = 120;
 const FADE_MIN = 700;
 const FADE_MAX = 1100;
 
-function pickColor(index) {
-  return COLOR_PALETTE[index % COLOR_PALETTE.length];
+function pickColor(index, palette) {
+  return palette[index % palette.length];
 }
 
 function randomFadeDuration() {
   return FADE_MIN + Math.random() * (FADE_MAX - FADE_MIN);
 }
 
-export default function InteractiveText({ lines }) {
+function measureVideoOverlap(letterRect, wrapRect, canvas) {
+  if (
+    letterRect.right < wrapRect.left ||
+    letterRect.left > wrapRect.right ||
+    letterRect.bottom < wrapRect.top ||
+    letterRect.top > wrapRect.bottom
+  ) {
+    return 0;
+  }
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx || !canvas.width || !canvas.height) return 0;
+
+  let hits = 0;
+  let samples = 0;
+  const step = Math.max(3, Math.floor(Math.min(letterRect.width, letterRect.height) / 4));
+
+  for (let py = letterRect.top + step / 2; py < letterRect.bottom; py += step) {
+    for (let px = letterRect.left + step / 2; px < letterRect.right; px += step) {
+      if (
+        px < wrapRect.left ||
+        px > wrapRect.right ||
+        py < wrapRect.top ||
+        py > wrapRect.bottom
+      ) {
+        continue;
+      }
+
+      samples += 1;
+      const cx = Math.min(
+        canvas.width - 1,
+        Math.max(0, Math.floor(((px - wrapRect.left) / wrapRect.width) * canvas.width))
+      );
+      const cy = Math.min(
+        canvas.height - 1,
+        Math.max(0, Math.floor(((py - wrapRect.top) / wrapRect.height) * canvas.height))
+      );
+
+      const alpha = ctx.getImageData(cx, cy, 1, 1).data[3];
+      if (alpha > 48) hits += 1;
+    }
+  }
+
+  return samples > 0 ? hits / samples : 0;
+}
+
+export default function InteractiveText({
+  lines,
+  baseColor = '#ffffff',
+  accentPalette = null,
+  videoOverlapCanvasRef = null,
+  videoOverlapWrapRef = null,
+}) {
   const letterRefs = useRef([]);
   const fadeTimers = useRef({});
   const rafRef = useRef(null);
   const isHovering = useRef(false);
   const reducedMotion = usePrefersReducedMotion();
+  const videoReactive = Boolean(videoOverlapCanvasRef && videoOverlapWrapRef);
+  const palette = accentPalette?.length ? accentPalette : COLOR_PALETTE;
 
   const letterLines = useMemo(() => {
     let colorIndex = 0;
@@ -62,36 +109,47 @@ export default function InteractiveText({ lines }) {
     });
   }, [lines]);
 
-  const scheduleFadeBack = useCallback((index) => {
-    const entry = letterRefs.current[index];
-    if (!entry?.el) return;
-
-    if (fadeTimers.current[index]) {
-      clearTimeout(fadeTimers.current[index]);
-    }
-
-    fadeTimers.current[index] = setTimeout(() => {
-      entry.el.style.color = DEFAULT_COLOR;
+  const resetLetter = useCallback(
+    (entry) => {
+      if (!entry?.el) return;
+      entry.el.style.color = baseColor;
       entry.el.style.opacity = '1';
-      delete fadeTimers.current[index];
-    }, randomFadeDuration());
-  }, []);
+    },
+    [baseColor]
+  );
+
+  const scheduleFadeBack = useCallback(
+    (index) => {
+      const entry = letterRefs.current[index];
+      if (!entry?.el || videoReactive) return;
+
+      if (fadeTimers.current[index]) {
+        clearTimeout(fadeTimers.current[index]);
+      }
+
+      fadeTimers.current[index] = setTimeout(() => {
+        resetLetter(entry);
+        delete fadeTimers.current[index];
+      }, randomFadeDuration());
+    },
+    [resetLetter, videoReactive]
+  );
 
   const applyColor = useCallback(
     (index, intensity, colorIndex) => {
       const entry = letterRefs.current[index];
       if (!entry?.el || intensity <= 0.12) return;
 
-      entry.el.style.color = pickColor(colorIndex);
+      entry.el.style.color = pickColor(colorIndex, palette);
       entry.el.style.opacity = String(0.6 + intensity * 0.4);
       scheduleFadeBack(index);
     },
-    [scheduleFadeBack]
+    [scheduleFadeBack, palette]
   );
 
   const updateFromPointer = useCallback(
     (clientX, clientY) => {
-      if (reducedMotion || clientX == null || clientY == null) return;
+      if (reducedMotion || videoReactive || clientX == null || clientY == null) return;
 
       letterRefs.current.forEach((entry, index) => {
         if (!entry?.el) return;
@@ -107,12 +165,49 @@ export default function InteractiveText({ lines }) {
         }
       });
     },
-    [applyColor, reducedMotion]
+    [applyColor, reducedMotion, videoReactive]
   );
+
+  useEffect(() => {
+    if (!videoReactive || reducedMotion) return undefined;
+
+    let frame = 0;
+
+    const tick = () => {
+      const canvas = videoOverlapCanvasRef.current;
+      const wrap = videoOverlapWrapRef.current;
+
+      if (canvas?.width && wrap) {
+        const wrapRect = wrap.getBoundingClientRect();
+
+        letterRefs.current.forEach((entry) => {
+          if (!entry?.el) return;
+          const letterRect = entry.el.getBoundingClientRect();
+          const overlap = measureVideoOverlap(letterRect, wrapRect, canvas);
+
+          if (overlap > 0.12) {
+            entry.el.style.color = pickColor(entry.colorIndex, palette);
+            entry.el.style.opacity = String(0.7 + overlap * 0.3);
+          } else {
+            resetLetter(entry);
+          }
+        });
+      }
+
+      frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [videoReactive, reducedMotion, videoOverlapCanvasRef, videoOverlapWrapRef, resetLetter, palette]);
+
+  useEffect(() => {
+    letterRefs.current.forEach((entry) => resetLetter(entry));
+  }, [baseColor, resetLetter]);
 
   const handleMouseMove = useCallback(
     (e) => {
-      if (reducedMotion) return;
+      if (reducedMotion || videoReactive) return;
       isHovering.current = true;
 
       const x = e.clientX;
@@ -126,10 +221,11 @@ export default function InteractiveText({ lines }) {
         }
       });
     },
-    [reducedMotion, updateFromPointer]
+    [reducedMotion, updateFromPointer, videoReactive]
   );
 
   const handleMouseLeave = useCallback(() => {
+    if (videoReactive) return;
     isHovering.current = false;
 
     letterRefs.current.forEach((entry, index) => {
@@ -138,19 +234,18 @@ export default function InteractiveText({ lines }) {
         clearTimeout(fadeTimers.current[index]);
         delete fadeTimers.current[index];
       }
-      entry.el.style.color = DEFAULT_COLOR;
-      entry.el.style.opacity = '1';
+      resetLetter(entry);
     });
-  }, []);
+  }, [resetLetter, videoReactive]);
 
   const handleTouch = useCallback(
     (e) => {
-      if (reducedMotion) return;
+      if (reducedMotion || videoReactive) return;
       const touch = e.touches[0];
       if (!touch) return;
       updateFromPointer(touch.clientX, touch.clientY);
     },
-    [reducedMotion, updateFromPointer]
+    [reducedMotion, updateFromPointer, videoReactive]
   );
 
   let letterIndex = 0;
@@ -190,6 +285,7 @@ export default function InteractiveText({ lines }) {
                       : null;
                   }}
                   className="interactive-text__letter"
+                  style={{ color: baseColor }}
                 >
                   {item.char}
                 </span>

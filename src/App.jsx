@@ -11,6 +11,7 @@ import Experience from './components/Experience';
 import Contact from './components/Contact';
 import { projects } from './data/siteContent';
 import { projectMedia } from './data/projectMedia';
+import { LAYOUT_EDIT_MODE } from './data/layoutEdit';
 import './styles/App.css';
 
 function resolveProjectUrl(project) {
@@ -22,7 +23,7 @@ function resolveProjectUrl(project) {
 }
 
 export default function App() {
-  const [showIntro, setShowIntro] = useState(true);
+  const [showIntro, setShowIntro] = useState(!LAYOUT_EDIT_MODE);
   const [popupProject, setPopupProject] = useState(null);
   const heroRef = useRef(null);
 

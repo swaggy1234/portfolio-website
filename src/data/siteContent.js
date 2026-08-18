@@ -7,7 +7,7 @@ export const siteConfig = {
   name: 'Sraghvi Anchaliya',
   monogram: 'SA',
   email: 'sraghvia@gmail.com',
-  introDuration: 1800, // milliseconds — change intro timing
+  introDuration: 2800, // milliseconds — intro follows pour video length
 
   heroStatement: [
     "I'M A CREATIVE TECHNOLOGIST",
@@ -192,6 +192,13 @@ export const galleryContent = {
           label: 'In progress',
         },
       ],
+    },
+    {
+      id: 'prismatic-skull',
+      type: 'image',
+      src: '/gallery/prismatic-skull.jpg',
+      title: 'Prismatic Skull',
+      medium: 'Acrylic on canvas',
     },
   ],
 };

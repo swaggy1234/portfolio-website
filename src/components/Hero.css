@@ -11,6 +11,10 @@
   overflow: hidden;
 }
 
+.hero--allow-overflow {
+  overflow: visible;
+}
+
 .hero__header {
   display: flex;
   align-items: flex-start;
@@ -86,6 +90,147 @@
 .hero__nav button:hover,
 .hero__nav a:hover {
   opacity: 0.5;
+}
+
+.hero--text-dark .hero__logo .monogram {
+  color: var(--color-wine);
+  text-shadow: none;
+}
+
+.hero--text-dark .hero__menu {
+  color: var(--color-wine);
+}
+
+.hero--text-dark .hero__menu--open {
+  color: var(--color-wine);
+}
+
+.hero--text-dark .hero__arrow {
+  color: var(--color-wine);
+}
+
+.hero--text-dark .interactive-text__letter {
+  color: var(--color-wine);
+  text-shadow: none;
+}
+
+.hero--centered .hero__content {
+  justify-content: center;
+  align-items: center;
+  z-index: 2;
+}
+
+.hero--centered .hero__content-motion {
+  width: min(100%, 64rem);
+}
+
+.hero--centered .interactive-text {
+  text-align: center;
+}
+
+.hero--centered .interactive-text__line {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.hero--video-hero {
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  box-sizing: border-box;
+  isolation: isolate;
+  /* Fixed-position video stickers scroll with the hero, not the page */
+  transform: translateZ(0);
+}
+
+.hero--video-hero .hero-video,
+.hero--video-hero .hero-video--viewport,
+.hero--video-hero .hero-video--locked {
+  z-index: 1;
+}
+
+.hero--video-hero .hero__content {
+  z-index: 20;
+  pointer-events: none;
+}
+
+.hero--video-hero .hero__header {
+  z-index: 25;
+  position: relative;
+}
+
+.hero--video-hero .hero__content-motion,
+.hero--video-hero .interactive-text,
+.hero--video-hero .interactive-text__letter {
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 768px) {
+  .hero--centered .interactive-text__line {
+    white-space: normal;
+  }
+}
+
+.hero--split .hero__content {
+  justify-content: flex-start;
+  align-items: center;
+  width: 44%;
+  max-width: 44%;
+  padding: 5rem clamp(1.5rem, 4vw, 3rem) 4rem clamp(1.5rem, 5vw, 4rem);
+  box-sizing: border-box;
+}
+
+.hero--split .hero__content-motion {
+  width: 100%;
+  max-width: none;
+}
+
+.hero--split .interactive-text {
+  text-align: left;
+}
+
+.hero--split .interactive-text__line {
+  text-align: left;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .hero--split .hero__content {
+    width: 100%;
+    max-width: 100%;
+    padding-right: 1.5rem;
+    align-items: flex-start;
+    padding-top: 5.5rem;
+  }
+
+  .hero--split .interactive-text__line {
+    white-space: normal;
+  }
+}
+
+.hero--layout-edit .hero-video--editing {
+  pointer-events: auto !important;
+  z-index: 100 !important;
+}
+
+.hero--layout-edit .hero__content {
+  z-index: 1 !important;
+}
+
+.hero--layout-edit .hero-video__rotate,
+.hero--layout-edit .hero-video__resize {
+  pointer-events: auto !important;
+}
+
+.hero--layout-edit .hero__content,
+.hero--layout-edit .hero__content * {
+  pointer-events: none !important;
+}
+
+.hero--layout-edit .hero__arrow {
+  pointer-events: none !important;
 }
 
 /* Decorative stickers — true PNG colors, no blend wash-out */

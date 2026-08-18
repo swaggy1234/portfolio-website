@@ -46,6 +46,10 @@
   opacity: 0.65;
 }
 
+.hero__menu--open {
+  color: var(--color-wine);
+}
+
 .hero__nav {
   position: fixed;
   top: 0;
@@ -68,16 +72,19 @@
   transform: translateX(0);
 }
 
-.hero__nav button {
+.hero__nav button,
+.hero__nav a {
   font-family: var(--font-serif);
   font-size: 1.8rem;
   font-weight: 300;
   text-align: left;
   letter-spacing: 0.02em;
   transition: opacity 0.2s;
+  color: inherit;
 }
 
-.hero__nav button:hover {
+.hero__nav button:hover,
+.hero__nav a:hover {
   opacity: 0.5;
 }
 

@@ -51,7 +51,22 @@ export default function ProjectCard({ project, index, onOpenPopup }) {
             <span className="project-card__dot">·</span>
             <span>{project.year}</span>
           </div>
-          <h3 className="project-card__title">{project.title}</h3>
+          <div className="project-card__head">
+            <h3 className="project-card__title">{project.title}</h3>
+            {project.subtitle ? (
+              <p className="project-card__subtitle">{project.subtitle}</p>
+            ) : null}
+            {project.description ? (
+              <div className="project-card__description">
+                {(Array.isArray(project.description)
+                  ? project.description
+                  : [project.description]
+                ).map((paragraph) => (
+                  <p key={paragraph.slice(0, 48)}>{paragraph}</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <span className="project-card__cta">
             {ctaLabel}
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">

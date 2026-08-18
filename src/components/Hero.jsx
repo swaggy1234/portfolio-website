@@ -80,7 +80,9 @@ export default function Hero({ stageRef }) {
 
   const scrollTo = (id) => {
     setMenuOpen(false);
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+    const node = document.getElementById(id);
+    if (!node) return;
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleLayoutChange = (id, box) => {
@@ -166,9 +168,18 @@ export default function Hero({ stageRef }) {
 
         <nav className={`hero__nav${menuOpen ? ' hero__nav--open' : ''}`}>
           <button onClick={() => scrollTo('work')}>Work</button>
+          <button onClick={() => scrollTo('studio')}>Studio</button>
           <button onClick={() => scrollTo('about')}>About</button>
           <button onClick={() => scrollTo('experience')}>Experience</button>
           <button onClick={() => scrollTo('contact')}>Contact</button>
+          <a
+            href={siteConfig.social.resume}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setMenuOpen(false)}
+          >
+            Resume
+          </a>
         </nav>
       </header>
 

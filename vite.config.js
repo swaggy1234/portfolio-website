@@ -330,4 +330,10 @@ export function resolveSticker(sticker) {
 export default defineConfig({
   plugins: [react(), ensureRoboticsPdfPlugin(), yahooFinanceProxyPlugin(), lockLayoutPlugin()],
   assetsInclude: ['**/*.pdf'],
+  server: {
+    watch: {
+      usePolling: true,
+      interval: 400,
+    },
+  },
 });

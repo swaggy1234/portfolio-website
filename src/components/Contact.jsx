@@ -28,6 +28,9 @@ export default function Contact() {
         </a>
 
         <div className="contact__links">
+          <a href={siteConfig.social.resume} target="_blank" rel="noopener noreferrer">
+            Resume
+          </a>
           <a href={siteConfig.social.github} target="_blank" rel="noopener noreferrer">
             GitHub
           </a>

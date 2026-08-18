@@ -4,6 +4,7 @@ import Intro from './components/Intro';
 import Hero from './components/Hero';
 import ScrollFlowerVideo from './components/ScrollFlowerVideo';
 import ProjectCard from './components/ProjectCard';
+import Gallery from './components/Gallery';
 import VispromPopup from './components/VispromPopup';
 import About from './components/About';
 import Experience from './components/Experience';
@@ -72,6 +73,8 @@ export default function App() {
               </div>
             </section>
 
+            <Gallery />
+
             <About />
             <Experience />
             <Contact />
@@ -83,10 +86,15 @@ export default function App() {
         open={Boolean(popupProject)}
         onClose={() => setPopupProject(null)}
         projectUrl={resolveProjectUrl(popupProject)}
-        title={popupProject?.popupTitle || popupProject?.title || 'Project'}
+        title={
+          popupProject?.popupTitle ||
+          [popupProject?.title, popupProject?.subtitle].filter(Boolean).join('  ·  ') ||
+          'Project'
+        }
         iframeTitle={popupProject?.title || 'Project preview'}
         kind={popupProject?.popup === 'pdf' ? 'pdf' : 'iframe'}
         githubUrl={popupProject?.github || ''}
+        description={popupProject?.description || ''}
       />
     </>
   );

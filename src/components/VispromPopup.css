@@ -55,6 +55,36 @@
   text-overflow: ellipsis;
 }
 
+.visprom-popup__about {
+  flex-shrink: 0;
+  background: #fff7fb;
+  border-bottom: 2px solid #000000;
+  padding: 0.75rem 1rem 0.85rem;
+  max-height: 28vh;
+  overflow-y: auto;
+}
+
+.visprom-popup__about-label {
+  margin: 0 0 0.45rem;
+  font-family: 'Press Start 2P', 'Courier New', monospace;
+  font-size: 0.42rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b1a3d;
+}
+
+.visprom-popup__about-body p {
+  margin: 0;
+  font-family: var(--font-sans, 'DM Sans', system-ui, sans-serif);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: #3d0f24;
+}
+
+.visprom-popup__about-body p + p {
+  margin-top: 0.55rem;
+}
+
 .visprom-popup__controls {
   display: flex;
   gap: 0.28rem;

@@ -19,6 +19,7 @@ export const siteConfig = {
     github: 'https://github.com/swaggy1234',
     linkedin: 'https://www.linkedin.com/in/sraghvi-anchaliya-13527a173/',
     email: 'mailto:sraghvia@gmail.com',
+    resume: '/Sraghvi-Anchaliya-Resume.pdf',
   },
 
   /**
@@ -42,6 +43,7 @@ export const projects = [
   {
     id: 1,
     title: 'VisProm Interactive Wine Data Visualization',
+    subtitle: 'INRAE',
     category: 'Data Visualization',
     year: '2026',
     tag: 'Research',
@@ -51,13 +53,18 @@ export const projects = [
     github: 'https://github.com/MIA-PS-Vis/UPSaclay-VisProm',
     popup: 'visprom',
     popupUrl: '/visprom/index.html',
-    popupTitle: '@ VISPROM ONLINE :)',
+    popupTitle: '@ VISPROM ONLINE  ·  INRAE',
+    description: [
+      'VisProm is an interactive data visualization tool developed at INRAE to help scientists explore and interpret complex, high-dimensional scientific datasets.',
+      'I designed and developed the tool end-to-end, from the visualization architecture and interaction design to the implementation of exploration, filtering, and comparison features. I also led design workshops with leading wine and fermentation scientists, working directly with researchers to understand their workflows, pain points, and analytical needs, and translating those insights into tools that support real scientific decision-making.',
+    ],
   },
   {
     id: 2,
     title: 'Robotics Demonstration Retrieval',
+    subtitle: 'Chewy',
     category: 'AI / Data Systems',
-    year: '2025',
+    year: 'June 2025 – May 2026',
     tag: 'Research',
     image:
       'https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=1200&q=80&auto=format&fit=crop',
@@ -65,7 +72,10 @@ export const projects = [
     github: 'https://github.com/swaggy1234/ds4300-Final',
     popup: 'pdf',
     popupAsset: 'roboticsPresentationPdf',
-    popupTitle: 'Robotics Demonstration Retrieval',
+    popupTitle: 'Robotics Demonstration Retrieval  ·  Chewy',
+    description: [
+      'Worked on this at Chewy from June 2025 to May 2026. Built data infrastructure and developer tools for Chewy’s Physical AI & Robotics team, creating end-to-end pipelines for collecting, processing, structuring, and visualizing robot demonstration data used to develop learning-based manipulation systems.',
+    ],
   },
   {
     id: 3,
@@ -111,6 +121,80 @@ export const projects = [
     popupTitle: 'NBA Player Performance Explorer',
   },
 ];
+
+export const galleryContent = {
+  label: 'Studio',
+  title: 'A walk through the work',
+  lede: 'Personal drawings and canvases. Use the arrows to walk the hall.',
+  works: [
+    {
+      id: 'in-progress',
+      type: 'image',
+      src: '/gallery/in-progress.jpg',
+      title: 'Currently in progress',
+      medium: 'Acrylic on canvas',
+    },
+    {
+      id: 'process',
+      type: 'video',
+      src: '/gallery/process.mp4',
+      title: 'Process',
+      medium: 'Studio video',
+    },
+    {
+      id: 'mint-tears',
+      type: 'image',
+      src: '/gallery/mint-tears.jpg',
+      title: 'Mint Tears',
+      medium: 'Digital drawing',
+    },
+    {
+      id: 'ink-portrait',
+      type: 'image',
+      src: '/gallery/ink-portrait.jpg',
+      title: 'Ink',
+      medium: 'Digital drawing',
+    },
+    {
+      id: 'pierrot',
+      title: 'Pierrot',
+      medium: 'Digital drawing',
+      pieces: [
+        {
+          id: 'pierrot-drawing',
+          type: 'image',
+          src: '/gallery/pierrot.jpg',
+          label: 'Finished',
+        },
+        {
+          id: 'pierrot-process',
+          type: 'video',
+          src: '/gallery/pierrot-process.mp4',
+          label: 'Being drawn',
+        },
+      ],
+    },
+    {
+      id: 'starry-lisa',
+      title: 'Starry Lisa',
+      medium: 'Acrylic on canvas',
+      pieces: [
+        {
+          id: 'starry-lisa-finished',
+          type: 'image',
+          src: '/gallery/starry-lisa.jpg',
+          label: 'Finished',
+        },
+        {
+          id: 'starry-lisa-progress',
+          type: 'image',
+          src: '/gallery/lisa-in-progress.jpg',
+          label: 'In progress',
+        },
+      ],
+    },
+  ],
+};
 
 export const aboutContent = {
   heading: 'About',

@@ -26,12 +26,18 @@ export default function VispromPopup({
   iframeTitle = 'Project preview',
   kind = 'iframe',
   githubUrl = '',
+  description = '',
 }) {
   const [pdfUrl, setPdfUrl] = useState('');
   const [pdfError, setPdfError] = useState('');
   const [pdfLoading, setPdfLoading] = useState(false);
 
   const isPdf = kind === 'pdf' || projectUrl.toLowerCase().includes('.pdf');
+  const aboutParagraphs = Array.isArray(description)
+    ? description.filter(Boolean)
+    : description
+      ? [description]
+      : [];
 
   useEffect(() => {
     if (!open) return undefined;
@@ -137,6 +143,17 @@ export default function VispromPopup({
             </button>
           </div>
         </div>
+
+        {aboutParagraphs.length ? (
+          <div className="visprom-popup__about">
+            <p className="visprom-popup__about-label">About this project</p>
+            <div className="visprom-popup__about-body">
+              {aboutParagraphs.map((paragraph) => (
+                <p key={paragraph.slice(0, 48)}>{paragraph}</p>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="visprom-popup__frame">
           {isPdf ? (

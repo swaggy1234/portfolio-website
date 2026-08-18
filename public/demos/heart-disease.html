@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heart Disease Predictor</title>
+    <style>
+      :root {
+        --bg: #faf0f5;
+        --ink: #3d0f24;
+        --accent: #c15594;
+        --card: #ffffff;
+        --line: rgba(61, 15, 36, 0.14);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      header {
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255,255,255,0.72);
+      }
+      header h1 {
+        margin: 0;
+        font-family: Georgia, serif;
+        font-weight: 400;
+        font-size: 1.3rem;
+      }
+      header p { margin: 0.3rem 0 0; opacity: 0.7; font-size: 0.85rem; }
+      .wrap {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 1rem;
+        padding: 1rem;
+      }
+      @media (max-width: 800px) { .wrap { grid-template-columns: 1fr; } }
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--line);
+        padding: 1rem;
+      }
+      .panel h2 {
+        margin: 0 0 0.85rem;
+        font-size: 0.75rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      form {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        font-size: 0.8rem;
+      }
+      input, select {
+        border: 1px solid var(--line);
+        padding: 0.45rem 0.5rem;
+        font: inherit;
+        background: #fff;
+        color: var(--ink);
+      }
+      .full { grid-column: 1 / -1; }
+      button {
+        grid-column: 1 / -1;
+        border: 0;
+        background: var(--ink);
+        color: #fff;
+        padding: 0.7rem 1rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      .result {
+        min-height: 180px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 0.6rem;
+      }
+      .meter {
+        height: 12px;
+        background: rgba(61,15,36,0.08);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .meter > span {
+        display: block;
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #9b5a7a, #c15594, #a11d3a);
+        transition: width 0.35s ease;
+      }
+      .score {
+        font-family: Georgia, serif;
+        font-size: 2rem;
+      }
+      .factors { font-size: 0.88rem; line-height: 1.5; opacity: 0.85; }
+      .note { font-size: 0.78rem; opacity: 0.6; margin-top: 0.75rem; }
+      .scroll-cue {
+        text-align: center;
+        padding: 0.25rem 1rem 1rem;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+        opacity: 0.85;
+      }
+      .poster-section {
+        padding: 0 1rem 1.5rem;
+      }
+      .poster-section .panel {
+        padding: 1rem 1rem 1.15rem;
+      }
+      .poster-section h2 {
+        margin: 0 0 0.35rem;
+      }
+      .poster-section .lede {
+        margin: 0 0 0.9rem;
+        font-size: 0.88rem;
+        opacity: 0.75;
+        max-width: 40rem;
+      }
+      .poster-frame {
+        border: 1px solid var(--line);
+        background: #fff;
+        overflow: hidden;
+      }
+      .poster-frame img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .poster-actions {
+        margin-top: 0.75rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .poster-actions a {
+        color: var(--ink);
+        font-size: 0.85rem;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Heart Disease Predictor</h1>
+      <p>Demo UI based on the Random Forest heart-disease research project</p>
+    </header>
+    <div class="wrap">
+      <section class="panel">
+        <h2>Patient indicators</h2>
+        <form id="form">
+          <label>Age
+            <input type="number" name="age" min="18" max="100" value="54" required />
+          </label>
+          <label>Gender
+            <select name="gender">
+              <option value="1">Male</option>
+              <option value="0">Female</option>
+            </select>
+          </label>
+          <label>Resting BP
+            <input type="number" name="bp" min="80" max="220" value="130" required />
+          </label>
+          <label>Cholesterol
+            <input type="number" name="chol" min="100" max="600" value="240" required />
+          </label>
+          <label>Max heart rate
+            <input type="number" name="hr" min="60" max="220" value="150" required />
+          </label>
+          <label>Fasting blood sugar &gt; 120
+            <select name="fbs">
+              <option value="0">No</option>
+              <option value="1">Yes</option>
+            </select>
+          </label>
+          <label>Chest pain type
+            <select name="cp">
+              <option value="0">Typical angina</option>
+              <option value="1">Atypical angina</option>
+              <option value="2">Non-anginal</option>
+              <option value="3" selected>Asymptomatic</option>
+            </select>
+          </label>
+          <label>Exercise angina
+            <select name="exang">
+              <option value="0">No</option>
+              <option value="1">Yes</option>
+            </select>
+          </label>
+          <button type="submit">Run prediction</button>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>Model output</h2>
+        <div class="result" id="result">
+          <div class="muted">Enter values and run a prediction.</div>
+        </div>
+        <p class="note">Educational demo only — not medical advice. The live research project used a hyper-tuned Random Forest Classifier evaluated on accuracy and recall.</p>
+      </section>
+    </div>
+    <p class="scroll-cue">Scroll for research poster ↓</p>
+    <section class="poster-section" id="poster">
+      <div class="panel">
+        <h2>Research poster</h2>
+        <p class="lede">
+          Full project poster from the heart-disease prediction study — methods, model results, and takeaways.
+        </p>
+        <div class="poster-frame">
+          <img
+            src="./heart-disease-poster.jpg"
+            alt="Heart disease prediction research poster"
+            loading="lazy"
+          />
+        </div>
+        <div class="poster-actions">
+          <a href="./heart-disease-poster.pdf" target="_blank" rel="noopener">Open PDF</a>
+        </div>
+      </div>
+    </section>
+    <script>
+      function predict(data) {
+        let score = 0.18;
+        const factors = [];
+
+        if (data.age >= 55) { score += 0.14; factors.push('Age 55+'); }
+        else if (data.age >= 45) { score += 0.08; factors.push('Age 45–54'); }
+
+        if (data.gender === 1) { score += 0.05; factors.push('Male'); }
+
+        if (data.bp >= 140) { score += 0.12; factors.push('Elevated resting BP'); }
+        else if (data.bp >= 130) { score += 0.06; factors.push('Borderline BP'); }
+
+        if (data.chol >= 240) { score += 0.12; factors.push('High cholesterol'); }
+        else if (data.chol >= 200) { score += 0.06; factors.push('Borderline cholesterol'); }
+
+        if (data.hr < 120) { score += 0.1; factors.push('Lower max heart rate'); }
+
+        if (data.fbs === 1) { score += 0.07; factors.push('Elevated fasting blood sugar'); }
+        if (data.cp === 3) { score += 0.11; factors.push('Asymptomatic chest pain pattern'); }
+        if (data.exang === 1) { score += 0.13; factors.push('Exercise-induced angina'); }
+
+        score = Math.max(0.05, Math.min(0.95, score));
+        return { score, factors };
+      }
+
+      document.getElementById('form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const form = new FormData(event.target);
+        const data = {
+          age: Number(form.get('age')),
+          gender: Number(form.get('gender')),
+          bp: Number(form.get('bp')),
+          chol: Number(form.get('chol')),
+          hr: Number(form.get('hr')),
+          fbs: Number(form.get('fbs')),
+          cp: Number(form.get('cp')),
+          exang: Number(form.get('exang')),
+        };
+        const { score, factors } = predict(data);
+        const pct = Math.round(score * 100);
+        const label = pct >= 60 ? 'Higher estimated risk' : pct >= 35 ? 'Moderate estimated risk' : 'Lower estimated risk';
+        document.getElementById('result').innerHTML = `
+          <div class="score">${pct}%</div>
+          <div>${label}</div>
+          <div class="meter"><span style="width:${pct}%"></span></div>
+          <div class="factors"><strong>Key factors:</strong> ${factors.length ? factors.join(', ') : 'No major risk flags from these inputs'}</div>
+        `;
+      });
+    </script>
+  </body>
+</html>

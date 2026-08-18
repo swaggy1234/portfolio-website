@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NBA Player Performance Explorer</title>
+    <style>
+      :root {
+        --bg: #faf0f5;
+        --ink: #3d0f24;
+        --muted: #8e5a72;
+        --accent: #c15594;
+        --card: #ffffff;
+        --line: rgba(61, 15, 36, 0.14);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+        background:
+          radial-gradient(ellipse 50% 30% at 90% 0%, rgba(193,85,148,0.1), transparent),
+          var(--bg);
+        color: var(--ink);
+      }
+      header {
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255,255,255,0.78);
+      }
+      header h1 {
+        margin: 0;
+        font-family: Georgia, serif;
+        font-weight: 400;
+        font-size: 1.35rem;
+      }
+      header p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.86rem; max-width: 46rem; line-height: 1.45; }
+      .wrap { padding: 1rem; display: grid; gap: 0.85rem; }
+      .controls, .panel {
+        background: var(--card);
+        border: 1px solid var(--line);
+        padding: 0.9rem;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr 1fr auto;
+        gap: 0.65rem;
+        align-items: end;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      input, select {
+        border: 1px solid var(--line);
+        padding: 0.48rem 0.55rem;
+        font: inherit;
+        color: var(--ink);
+        text-transform: none;
+        letter-spacing: normal;
+        background: #fff;
+      }
+      button {
+        border: 0;
+        background: var(--ink);
+        color: #fff;
+        padding: 0.55rem 0.85rem;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.88rem;
+      }
+      .panel h2 {
+        margin: 0 0 0.7rem;
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      .charts {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 0.85rem;
+      }
+      canvas {
+        width: 100%;
+        height: 280px;
+        display: block;
+        background: #fffafc;
+        border: 1px solid var(--line);
+      }
+      .table-wrap {
+        max-height: 320px;
+        overflow: auto;
+        border: 1px solid var(--line);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+      th, td {
+        text-align: left;
+        padding: 0.45rem 0.55rem;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: #fff7fa;
+        font-size: 0.66rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      tr:hover td { background: rgba(193,85,148,0.05); }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 0.55rem;
+      }
+      .status { font-size: 0.85rem; color: var(--muted); padding: 0.5rem 0; }
+      @media (max-width: 900px) {
+        .controls { grid-template-columns: 1fr 1fr; }
+        .charts { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>NBA Player Performance Explorer</h1>
+      <p>
+        Live browser port of my DS3500 Panel app (<code>nbaapp.py</code> / <code>nbaexplorer.py</code>):
+        real 2023–24 season stats from <code>nba_api</code> CSVs, filter by team / min games / stat,
+        leaderboard table, top-player bar chart, and AST vs PTS scatter.
+      </p>
+    </header>
+
+    <div class="wrap">
+      <div class="controls">
+        <label>Search player
+          <input id="search" type="search" placeholder="e.g. Jayson Tatum" />
+        </label>
+        <label>Stat
+          <select id="stat"></select>
+        </label>
+        <label>Team
+          <select id="team"><option value="All">All</option></select>
+        </label>
+        <label>Min games played
+          <input id="minGp" type="range" min="1" max="82" value="20" />
+        </label>
+        <button id="reset" type="button">Reset</button>
+      </div>
+
+      <div class="status" id="status">Loading nba_player_stats.csv + nba_team_stats.csv…</div>
+
+      <div class="charts">
+        <section class="panel">
+          <h2 id="barTitle">Top players</h2>
+          <canvas id="barChart" width="720" height="280"></canvas>
+        </section>
+        <section class="panel">
+          <h2>AST vs PTS</h2>
+          <canvas id="scatterChart" width="520" height="280"></canvas>
+        </section>
+      </div>
+
+      <section class="panel">
+        <h2>Filtered leaderboard</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Player</th>
+                <th>Team</th>
+                <th>GP</th>
+                <th id="statHead">PTS</th>
+                <th>PTS</th>
+                <th>AST</th>
+                <th>REB</th>
+                <th>FG%</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div class="meta">
+          <span id="countLabel">0 players</span>
+          <span id="gpLabel">Min GP: 20</span>
+          <span>Source: Exploring_NBA_Player_Performance CSVs</span>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const STAT_OPTIONS = [
+        'PTS', 'AST', 'REB', 'FG_PCT', 'FT_PCT', 'MIN', 'FGM', 'FGA', 'FG3M', 'FG3A',
+        'FTM', 'FTA', 'OREB', 'DREB', 'STL', 'BLK', 'TOV', 'W', 'L', 'W_PCT',
+      ];
+
+      let players = [];
+      let teams = [];
+
+      function parseCSV(text) {
+        const lines = text.trim().split(/\r?\n/);
+        const headers = splitCSVLine(lines[0]);
+        return lines.slice(1).filter(Boolean).map((line) => {
+          const cols = splitCSVLine(line);
+          const row = {};
+          headers.forEach((h, i) => {
+            const raw = cols[i] ?? '';
+            const num = Number(raw);
+            row[h] = raw !== '' && !Number.isNaN(num) && /^-?\d+(\.\d+)?$/.test(raw) ? num : raw;
+          });
+          return row;
+        });
+      }
+
+      function splitCSVLine(line) {
+        const out = [];
+        let cur = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i += 1) {
+          const ch = line[i];
+          if (ch === '"') {
+            inQuotes = !inQuotes;
+            continue;
+          }
+          if (ch === ',' && !inQuotes) {
+            out.push(cur);
+            cur = '';
+            continue;
+          }
+          cur += ch;
+        }
+        out.push(cur);
+        return out;
+      }
+
+      /** Port of nbaapp.filter_data(stat, team, min_gp) */
+      function filterData(stat, team, minGp, search) {
+        let filtered = players.filter((row) => Number(row.GP) >= minGp);
+        if (team !== 'All') {
+          filtered = filtered.filter((row) => row.TEAM_ABBREVIATION === team);
+        }
+        if (search) {
+          const q = search.toLowerCase();
+          filtered = filtered.filter((row) => String(row.PLAYER_NAME).toLowerCase().includes(q));
+        }
+        return filtered
+          .slice()
+          .sort((a, b) => Number(b[stat] || 0) - Number(a[stat] || 0));
+      }
+
+      function drawBar(stat, rows) {
+        const canvas = document.getElementById('barChart');
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        const pad = { t: 16, r: 16, b: 70, l: 44 };
+        ctx.clearRect(0, 0, w, h);
+        const top = rows.slice(0, 15);
+        if (!top.length) return;
+        const values = top.map((r) => Number(r[stat]) || 0);
+        const max = Math.max(...values, 0.0001);
+        const barW = (w - pad.l - pad.r) / top.length;
+
+        top.forEach((row, i) => {
+          const val = Number(row[stat]) || 0;
+          const bh = ((h - pad.t - pad.b) * val) / max;
+          const x = pad.l + i * barW;
+          const y = h - pad.b - bh;
+          ctx.fillStyle = i % 2 === 0 ? '#c15594' : '#3d0f24';
+          ctx.fillRect(x + 4, y, Math.max(barW - 8, 2), bh);
+          ctx.save();
+          ctx.translate(x + barW / 2, h - pad.b + 8);
+          ctx.rotate(-Math.PI / 3.2);
+          ctx.fillStyle = '#8e5a72';
+          ctx.font = '11px DM Sans, sans-serif';
+          ctx.fillText(String(row.PLAYER_NAME).split(' ').pop(), 0, 0);
+          ctx.restore();
+        });
+      }
+
+      function drawScatter(highlightTeam) {
+        const canvas = document.getElementById('scatterChart');
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        const pad = 36;
+        ctx.clearRect(0, 0, w, h);
+
+        const pts = players.map((r) => ({
+          x: Number(r.AST) || 0,
+          y: Number(r.PTS) || 0,
+          team: r.TEAM_ABBREVIATION,
+          name: r.PLAYER_NAME,
+        }));
+        const maxX = Math.max(...pts.map((p) => p.x), 1);
+        const maxY = Math.max(...pts.map((p) => p.y), 1);
+
+        ctx.strokeStyle = 'rgba(61,15,36,0.1)';
+        for (let i = 0; i < 4; i += 1) {
+          const y = pad + ((h - pad * 2) * i) / 3;
+          ctx.beginPath();
+          ctx.moveTo(pad, y);
+          ctx.lineTo(w - pad, y);
+          ctx.stroke();
+        }
+
+        pts.forEach((p) => {
+          const x = pad + (p.x / maxX) * (w - pad * 2);
+          const y = h - pad - (p.y / maxY) * (h - pad * 2);
+          const active = highlightTeam === 'All' || p.team === highlightTeam;
+          ctx.fillStyle = active ? 'rgba(193,85,148,0.75)' : 'rgba(61,15,36,0.12)';
+          ctx.beginPath();
+          ctx.arc(x, y, active ? 3.2 : 2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        ctx.fillStyle = '#8e5a72';
+        ctx.font = '11px DM Sans, sans-serif';
+        ctx.fillText('AST →', w / 2 - 16, h - 10);
+        ctx.save();
+        ctx.translate(12, h / 2 + 10);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText('PTS', 0, 0);
+        ctx.restore();
+      }
+
+      function render() {
+        const stat = document.getElementById('stat').value;
+        const team = document.getElementById('team').value;
+        const minGp = Number(document.getElementById('minGp').value);
+        const search = document.getElementById('search').value.trim();
+        const rows = filterData(stat, team, minGp, search);
+
+        document.getElementById('gpLabel').textContent = `Min GP: ${minGp}`;
+        document.getElementById('countLabel').textContent = `${rows.length} players`;
+        document.getElementById('barTitle').textContent = `Top players by ${stat}`;
+        document.getElementById('statHead').textContent = stat;
+        document.getElementById('status').textContent =
+          `Merged player + team season tables · showing ${rows.length} of ${players.length}`;
+
+        document.getElementById('tbody').innerHTML = rows
+          .slice(0, 100)
+          .map((r, i) => {
+            const statVal = Number(r[stat]);
+            const display =
+              String(stat).includes('PCT') && !Number.isNaN(statVal)
+                ? (statVal * (statVal <= 1 ? 100 : 1)).toFixed(1) + (statVal <= 1 ? '%' : '')
+                : Number.isFinite(statVal)
+                  ? statVal.toLocaleString(undefined, { maximumFractionDigits: 1 })
+                  : r[stat];
+            return `<tr>
+              <td>${i + 1}</td>
+              <td>${r.PLAYER_NAME}</td>
+              <td>${r.TEAM_ABBREVIATION || '—'}</td>
+              <td>${r.GP}</td>
+              <td><strong>${display}</strong></td>
+              <td>${r.PTS}</td>
+              <td>${r.AST}</td>
+              <td>${r.REB}</td>
+              <td>${((Number(r.FG_PCT) || 0) * 100).toFixed(1)}%</td>
+            </tr>`;
+          })
+          .join('') || '<tr><td colspan="9">No players match these filters.</td></tr>';
+
+        drawBar(stat, rows);
+        drawScatter(team);
+      }
+
+      Promise.all([
+        fetch('./nba_player_stats.csv').then((r) => r.text()),
+        fetch('./nba_team_stats.csv').then((r) => r.text()),
+      ])
+        .then(([playerText, teamText]) => {
+          const playerRows = parseCSV(playerText);
+          teams = parseCSV(teamText);
+
+          // Rename team cols like nbaapp.py, then merge on TEAM_ID
+          const teamLookup = {};
+          teams.forEach((t) => {
+            const renamed = {};
+            Object.entries(t).forEach(([key, val]) => {
+              renamed[key === 'TEAM_ID' || key === 'TEAM_NAME' ? key : `TEAM_${key}`] = val;
+            });
+            teamLookup[t.TEAM_ID] = renamed;
+          });
+
+          players = playerRows.map((p) => ({
+            ...p,
+            ...(teamLookup[p.TEAM_ID] || {}),
+          }));
+
+          const existingStats = STAT_OPTIONS.filter((s) =>
+            players.some((p) => p[s] !== undefined && p[s] !== '')
+          );
+          const statSelect = document.getElementById('stat');
+          statSelect.innerHTML = existingStats
+            .map((s) => `<option value="${s}" ${s === 'PTS' ? 'selected' : ''}>${s}</option>`)
+            .join('');
+
+          const teamSelect = document.getElementById('team');
+          const abbreviations = [...new Set(players.map((p) => p.TEAM_ABBREVIATION).filter(Boolean))].sort();
+          abbreviations.forEach((abbr) => {
+            const opt = document.createElement('option');
+            opt.value = abbr;
+            opt.textContent = abbr;
+            teamSelect.appendChild(opt);
+          });
+
+          const maxGp = Math.max(...players.map((p) => Number(p.GP) || 1));
+          const gp = document.getElementById('minGp');
+          gp.max = maxGp;
+          gp.value = Math.min(20, maxGp);
+
+          render();
+        })
+        .catch((err) => {
+          document.getElementById('status').textContent = `Failed to load NBA CSVs: ${err.message}`;
+        });
+
+      ['search', 'stat', 'team', 'minGp'].forEach((id) => {
+        document.getElementById(id).addEventListener('input', render);
+        document.getElementById(id).addEventListener('change', render);
+      });
+      document.getElementById('reset').addEventListener('click', () => {
+        document.getElementById('search').value = '';
+        document.getElementById('stat').value = 'PTS';
+        document.getElementById('team').value = 'All';
+        document.getElementById('minGp').value = '20';
+        render();
+      });
+    </script>
+  </body>
+</html>

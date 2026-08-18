@@ -5,48 +5,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: var(--color-intro);
+  background-color: var(--color-blush);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   overflow: hidden;
 }
 
-.intro__tigers {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.intro__tiger {
-  position: absolute;
-  color: rgba(255, 255, 255, 0.12);
-  width: clamp(100px, 18vw, 180px);
-}
-
-.intro__tiger--left {
-  left: 8%;
-  bottom: 10%;
-}
-
-.intro__tiger--right {
-  right: 8%;
-  top: 12%;
-}
-
 .intro__monogram {
-  position: relative;
-  z-index: 1;
+  font-family: var(--font-serif);
   font-size: clamp(6rem, 18vw, 12rem);
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: 0.02em;
   user-select: none;
-  color: rgba(250, 240, 245, 0.85);
-  text-shadow:
-    2px 2px 6px rgba(61, 15, 36, 0.25),
-    -1px -1px 2px rgba(255, 255, 255, 0.2),
-    0 0 40px rgba(255, 255, 255, 0.08);
-}
-
-@media (max-width: 768px) {
-  .intro__tiger {
-    opacity: 0.7;
-    width: clamp(70px, 22vw, 110px);
-  }
+  color: #ffffff;
+  text-shadow: 0 2px 8px rgba(45, 20, 30, 0.45);
 }

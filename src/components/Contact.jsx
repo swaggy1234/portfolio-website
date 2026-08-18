@@ -20,7 +20,7 @@ export default function Contact() {
         </h2>
         <p className="contact__text">
           I&apos;m open to collaborations, research opportunities, and creative projects.
-          Reach out — I&apos;d love to hear from you.
+          Reach out. I&apos;d love to hear from you.
         </p>
 
         <a href={siteConfig.social.email} className="contact__email">

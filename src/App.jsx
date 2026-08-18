@@ -2,20 +2,37 @@ import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Intro from './components/Intro';
 import Hero from './components/Hero';
-import ScrollMonogram from './components/ScrollMonogram';
+import ScrollFlowerVideo from './components/ScrollFlowerVideo';
 import ProjectCard from './components/ProjectCard';
+import VispromPopup from './components/VispromPopup';
 import About from './components/About';
 import Experience from './components/Experience';
 import Contact from './components/Contact';
 import { projects } from './data/siteContent';
+import { projectMedia } from './data/projectMedia';
 import './styles/App.css';
+
+function resolveProjectUrl(project) {
+  if (!project) return '';
+  if (project.popupAsset && projectMedia[project.popupAsset]) {
+    return projectMedia[project.popupAsset];
+  }
+  return project.popupUrl || project.link || '';
+}
 
 export default function App() {
   const [showIntro, setShowIntro] = useState(true);
+  const [popupProject, setPopupProject] = useState(null);
   const heroRef = useRef(null);
 
   const handleIntroComplete = useCallback(() => {
     setShowIntro(false);
+  }, []);
+
+  const handleOpenPopup = useCallback((project) => {
+    if (project?.popup) {
+      setPopupProject(project);
+    }
   }, []);
 
   return (
@@ -36,7 +53,7 @@ export default function App() {
               <Hero stageRef={heroRef} />
             </div>
 
-            <ScrollMonogram />
+            <ScrollFlowerVideo />
 
             <section className="section work" id="work">
               <div className="section__inner">
@@ -44,7 +61,12 @@ export default function App() {
                 <h2 className="section__title">Projects</h2>
                 <div className="work__grid">
                   {projects.map((project, index) => (
-                    <ProjectCard key={project.id} project={project} index={index} />
+                    <ProjectCard
+                      key={project.id}
+                      project={project}
+                      index={index}
+                      onOpenPopup={handleOpenPopup}
+                    />
                   ))}
                 </div>
               </div>
@@ -56,6 +78,16 @@ export default function App() {
           </motion.main>
         )}
       </AnimatePresence>
+
+      <VispromPopup
+        open={Boolean(popupProject)}
+        onClose={() => setPopupProject(null)}
+        projectUrl={resolveProjectUrl(popupProject)}
+        title={popupProject?.popupTitle || popupProject?.title || 'Project'}
+        iframeTitle={popupProject?.title || 'Project preview'}
+        kind={popupProject?.popup === 'pdf' ? 'pdf' : 'iframe'}
+        githubUrl={popupProject?.github || ''}
+      />
     </>
   );
 }

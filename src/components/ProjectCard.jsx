@@ -1,7 +1,22 @@
 import { motion } from 'framer-motion';
 import './ProjectCard.css';
 
-export default function ProjectCard({ project, index }) {
+export default function ProjectCard({ project, index, onOpenPopup }) {
+  const usesPopup = Boolean(project.popup);
+  const href = usesPopup ? '#' : project.link || project.github || '#';
+  const isExternal = !usesPopup && /^https?:\/\//.test(href);
+  const ctaLabel = usesPopup
+    ? 'View project'
+    : project.github
+      ? 'View on GitHub'
+      : 'View project';
+
+  const handleClick = (event) => {
+    if (!usesPopup) return;
+    event.preventDefault();
+    onOpenPopup?.(project);
+  };
+
   return (
     <motion.article
       className="project-card"
@@ -11,10 +26,11 @@ export default function ProjectCard({ project, index }) {
       transition={{ duration: 0.7, delay: index * 0.12, ease: [0.25, 0.1, 0.25, 1] }}
     >
       <a
-        href={project.link}
+        href={href}
         className="project-card__link"
-        target={project.link?.startsWith('http') || project.link?.startsWith('/') ? '_blank' : undefined}
-        rel={project.link?.startsWith('http') || project.link?.startsWith('/') ? 'noopener noreferrer' : undefined}
+        target={isExternal ? '_blank' : undefined}
+        rel={isExternal ? 'noopener noreferrer' : undefined}
+        onClick={handleClick}
       >
         <motion.div
           className={`project-card__image-wrap${project.imageFit === 'contain' ? ' project-card__image-wrap--contain' : ''}`}
@@ -37,7 +53,7 @@ export default function ProjectCard({ project, index }) {
           </div>
           <h3 className="project-card__title">{project.title}</h3>
           <span className="project-card__cta">
-            View project
+            {ctaLabel}
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1" />
             </svg>

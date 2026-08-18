@@ -1,0 +1,24 @@
+.scroll-flower {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  width: clamp(90px, 12vw, 130px);
+  height: auto;
+  pointer-events: none;
+  background: transparent;
+  line-height: 0;
+}
+
+.scroll-flower__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: transparent;
+}
+
+@media (max-width: 768px) {
+  .scroll-flower {
+    width: clamp(72px, 20vw, 100px);
+  }
+}

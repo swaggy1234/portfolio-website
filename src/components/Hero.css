@@ -4,6 +4,9 @@
   min-height: 100dvh;
   display: block;
   background-color: var(--color-blush);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   padding: clamp(1.5rem, 4vw, 2.5rem);
   overflow: hidden;
 }
@@ -21,40 +24,26 @@
   line-height: 1;
 }
 
+.hero__logo .monogram {
+  color: #ffffff;
+  font-weight: 700;
+  text-shadow: 0 1px 4px rgba(45, 20, 30, 0.45);
+}
+
 .hero__menu {
-  width: 32px;
-  height: 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
   padding: 0;
   z-index: 20;
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
+  transition: opacity 0.2s ease;
 }
 
-.hero__menu span {
-  display: block;
-  height: 1px;
-  background-color: var(--color-wine);
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-
-.hero__menu span:first-child {
-  width: 100%;
-}
-
-.hero__menu span:last-child {
-  width: 60%;
-  align-self: flex-end;
-}
-
-.hero__menu--open span:first-child {
-  transform: translateY(9px) rotate(45deg);
-  width: 100%;
-}
-
-.hero__menu--open span:last-child {
-  transform: translateY(-10px) rotate(-45deg);
-  width: 100%;
+.hero__menu:hover {
+  opacity: 0.65;
 }
 
 .hero__nav {
@@ -92,6 +81,48 @@
   opacity: 0.5;
 }
 
+/* Decorative stickers — true PNG colors, no blend wash-out */
+.hero__sticker {
+  background: transparent;
+}
+
+.hero__sticker--flower {
+  filter: drop-shadow(0 2px 8px rgba(61, 15, 36, 0.08));
+}
+
+.hero__stickers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.hero__stickers--edit {
+  z-index: 50;
+  pointer-events: none;
+}
+
+/* Edit mode: stickers on top; nothing underneath steals drag */
+.hero--layout-edit .editable-sticker--editing {
+  pointer-events: auto !important;
+  touch-action: none;
+  z-index: 50 !important;
+  cursor: grab;
+}
+
+.hero--layout-edit .editable-sticker--editing:active {
+  cursor: grabbing;
+}
+
+.hero--layout-edit .hero__content,
+.hero--layout-edit .hero__content * {
+  pointer-events: none !important;
+}
+
+.hero--layout-edit .hero__arrow {
+  pointer-events: none !important;
+}
+
 .hero__content {
   position: absolute;
   top: 0;
@@ -104,19 +135,12 @@
   padding: 5rem 1.5rem 4rem;
   z-index: 1;
   box-sizing: border-box;
+  pointer-events: auto;
 }
 
 .hero__content-motion {
   width: min(100%, 64rem);
   transform-origin: center center;
-}
-
-/* Decorative tiger — individually selectable in Builder.io */
-.hero__tiger {
-  position: absolute;
-  pointer-events: none;
-  background: transparent;
-  z-index: 2;
 }
 
 .hero__arrow {
@@ -127,7 +151,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-wine);
+  color: rgba(255, 255, 255, 0.9);
   z-index: 5;
   pointer-events: auto;
 }

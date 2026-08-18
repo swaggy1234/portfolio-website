@@ -1,0 +1,110 @@
+.editable-sticker--locked {
+  position: absolute;
+  pointer-events: none;
+  background: transparent;
+}
+
+/* Hoverable for tiny scale — still under hero text (z-index) */
+.editable-sticker--alive {
+  pointer-events: auto;
+  will-change: transform;
+  cursor: default;
+}
+
+.editable-sticker__measure {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.editable-sticker--editing {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed rgba(61, 15, 36, 0.45);
+  background: transparent;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  transform-origin: center center;
+  user-select: none;
+}
+
+.editable-sticker--editing:active {
+  cursor: grabbing;
+}
+
+.editable-sticker--editing .editable-sticker__img {
+  pointer-events: none;
+}
+
+.editable-sticker__rotate,
+.editable-sticker__resize {
+  pointer-events: auto;
+}
+
+.editable-sticker__resize {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--color-wine, #3d0f24);
+  border-radius: 2px;
+  background: #fff;
+  cursor: nwse-resize;
+  padding: 0;
+  z-index: 2;
+}
+
+.editable-sticker__visual {
+  width: 100%;
+  height: 100%;
+}
+
+.editable-sticker__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transform-origin: center center;
+}
+
+.editable-sticker--locked .editable-sticker__img {
+  height: auto;
+}
+
+.editable-sticker__rotate {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border: 1.5px solid var(--color-wine, #3d0f24);
+  border-radius: 50%;
+  background: #fff;
+  cursor: grab;
+  padding: 0;
+  z-index: 2;
+}
+
+.editable-sticker__rotate::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  width: 1px;
+  height: 12px;
+  margin-left: -0.5px;
+  background: rgba(61, 15, 36, 0.45);
+}
+
+.editable-sticker__rotate:active {
+  cursor: grabbing;
+  background: #f8d7e8;
+}

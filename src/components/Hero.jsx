@@ -1,12 +1,51 @@
-import { useState } from 'react';
-import { motion, useTransform, useMotionValueEvent, useScroll } from 'framer-motion';
+import { useCallback, useRef, useState } from 'react';
+import {
+  motion,
+  useTransform,
+  useMotionValueEvent,
+  useScroll,
+  useMotionValue,
+  useSpring,
+} from 'framer-motion';
 import { siteConfig } from '../data/siteContent';
+import {
+  HERO_BACKGROUND,
+  LAYOUT_EDIT_MODE,
+  STICKERS,
+  STICKER_LAYOUTS,
+  STICKER_TEMPLATES,
+  resolveSticker,
+} from '../data/layoutEdit';
 import InteractiveText from './InteractiveText';
+import EditableSticker from './EditableSticker';
+import LayoutEditPanel from './LayoutEditPanel';
 import './Hero.css';
 
+function mergeLayout(stickerId, stickerType, liveLayouts) {
+  const template = STICKER_TEMPLATES[stickerType];
+  const base = STICKER_LAYOUTS[stickerId] || {
+    xPercent: 40,
+    yPercent: 40,
+    widthPercent: 12,
+    rotation: 0,
+    flipX: false,
+    aspectRatio: template?.aspectRatio ?? 1,
+  };
+  const live = liveLayouts[stickerId];
+  return live ? { ...base, ...live } : base;
+}
+
 export default function Hero({ stageRef }) {
+  const heroElRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [arrowVisible, setArrowVisible] = useState(true);
+  const [liveLayouts, setLiveLayouts] = useState({});
+  const [editStickers, setEditStickers] = useState(() => [...STICKERS]);
+
+  const rawPointerX = useMotionValue(0);
+  const rawPointerY = useMotionValue(0);
+  const pointerX = useSpring(rawPointerX, { stiffness: 55, damping: 22, mass: 0.4 });
+  const pointerY = useSpring(rawPointerY, { stiffness: 55, damping: 22, mass: 0.4 });
 
   const { scrollYProgress } = useScroll({
     target: stageRef,
@@ -22,16 +61,95 @@ export default function Hero({ stageRef }) {
     setArrowVisible(value < 0.25);
   });
 
+  const handlePointerMove = useCallback(
+    (event) => {
+      const el = heroElRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      rawPointerX.set(((event.clientX - rect.left) / rect.width) * 2 - 1);
+      rawPointerY.set(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    },
+    [rawPointerX, rawPointerY]
+  );
+
+  const handlePointerLeave = useCallback(() => {
+    rawPointerX.set(0);
+    rawPointerY.set(0);
+  }, [rawPointerX, rawPointerY]);
+
   const scrollTo = (id) => {
     setMenuOpen(false);
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const handleLayoutChange = (id, box) => {
+    setLiveLayouts((prev) => ({ ...prev, [id]: box }));
+  };
+
+  const handleAddFlower = (type) => {
+    const template = STICKER_TEMPLATES[type];
+    if (!template) return;
+
+    const id = `${type}-${Date.now()}`;
+    setEditStickers((prev) => [...prev, { id, type }]);
+    setLiveLayouts((prev) => ({
+      ...prev,
+      [id]: {
+        xPercent: +(30 + Math.random() * 35).toFixed(2),
+        yPercent: +(20 + Math.random() * 45).toFixed(2),
+        widthPercent: type === 'flower2' ? 12 : 14,
+        rotation: Math.round(Math.random() * 40 - 20),
+        flipX: false,
+        aspectRatio: template.aspectRatio,
+      },
+    }));
+  };
+
+  const contentMotionStyle = {
+    y: contentY,
+    opacity: contentOpacity,
+    scale: contentScale,
+  };
+
+  const stickerList = LAYOUT_EDIT_MODE ? editStickers : STICKERS;
+
+  const renderSticker = (sticker, editMode) => {
+    const resolved = resolveSticker(sticker);
+    if (!resolved) return null;
+
+    const layout = mergeLayout(sticker.id, sticker.type, liveLayouts);
+
+    return (
+      <EditableSticker
+        key={sticker.id}
+        id={sticker.id}
+        className={resolved.className}
+        src={resolved.src}
+        layout={layout}
+        editMode={editMode}
+        containerRef={heroElRef}
+        onLayoutChange={handleLayoutChange}
+        motionDepth={resolved.motionDepth ?? 1}
+        pointerX={editMode ? undefined : pointerX}
+        pointerY={editMode ? undefined : pointerY}
+        scrollProgress={editMode ? undefined : scrollYProgress}
+      />
+    );
+  };
+
   return (
-    <section className="hero" id="hero">
+    <section
+      ref={heroElRef}
+      className={`hero${LAYOUT_EDIT_MODE ? ' hero--layout-edit' : ''}`}
+      id="hero"
+      style={{ backgroundImage: `url(${HERO_BACKGROUND})` }}
+      onPointerMove={LAYOUT_EDIT_MODE ? undefined : handlePointerMove}
+      onPointerLeave={LAYOUT_EDIT_MODE ? undefined : handlePointerLeave}
+    >
       <header className="hero__header">
         <a href="#hero" className="hero__logo" aria-label={siteConfig.name}>
-          <span className="monogram monogram--dark">
+          <span className="monogram">
             <span className="monogram__s">S</span>
             <span className="monogram__a">A</span>
           </span>
@@ -43,8 +161,7 @@ export default function Hero({ stageRef }) {
           aria-label="Toggle menu"
           aria-expanded={menuOpen}
         >
-          <span />
-          <span />
+          {menuOpen ? 'Close' : 'Menu'}
         </button>
 
         <nav className={`hero__nav${menuOpen ? ' hero__nav--open' : ''}`}>
@@ -56,24 +173,20 @@ export default function Hero({ stageRef }) {
       </header>
 
       <div className="hero__content">
-        <motion.div
-          className="hero__content-motion"
-          style={{
-            y: contentY,
-            opacity: contentOpacity,
-            scale: contentScale,
-          }}
-        >
+        <motion.div className="hero__content-motion" style={contentMotionStyle}>
           <InteractiveText lines={siteConfig.heroStatement} />
         </motion.div>
       </div>
 
-      <img
-        className="hero__tiger"
-        src="/images/Firefly.png"
-        alt=""
-        aria-hidden="true"
-      />
+      {LAYOUT_EDIT_MODE ? (
+        <div className="hero__stickers hero__stickers--edit">
+          {stickerList.map((sticker) => renderSticker(sticker, true))}
+        </div>
+      ) : (
+        <div className="hero__stickers">
+          {stickerList.map((sticker) => renderSticker(sticker, false))}
+        </div>
+      )}
 
       <motion.a
         href="#work"
@@ -104,6 +217,13 @@ export default function Hero({ stageRef }) {
           />
         </svg>
       </motion.a>
+
+      <LayoutEditPanel
+        stickers={editStickers}
+        layouts={liveLayouts}
+        editMode={LAYOUT_EDIT_MODE}
+        onAddFlower={handleAddFlower}
+      />
     </section>
   );
 }

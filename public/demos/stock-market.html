@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stock Market Simulator</title>
+    <style>
+      :root {
+        --bg: #f7eef3;
+        --ink: #3d0f24;
+        --muted: #8e5a72;
+        --accent: #c15594;
+        --card: #ffffff;
+        --line: rgba(61, 15, 36, 0.12);
+        --up: #1f7a4c;
+        --down: #b42318;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+        background:
+          radial-gradient(ellipse 55% 35% at 8% 0%, rgba(193,85,148,0.12), transparent),
+          var(--bg);
+        color: var(--ink);
+      }
+      .app { max-width: 1180px; margin: 0 auto; padding: 1rem 1.1rem 1.6rem; }
+      .gate {
+        max-width: 420px;
+        margin: 12vh auto;
+        background: var(--card);
+        border: 1px solid var(--line);
+        padding: 1.5rem;
+      }
+      .gate h1 {
+        margin: 0 0 0.4rem;
+        font-family: Georgia, serif;
+        font-weight: 500;
+        font-size: 1.7rem;
+      }
+      .gate p { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
+      .gate form { display: grid; gap: 0.65rem; }
+      .top { display: flex; justify-content: space-between; gap: 1rem; align-items: end; margin-bottom: 0.85rem; }
+      .top h1 {
+        margin: 0;
+        font-family: Georgia, 'Cormorant Garamond', serif;
+        font-weight: 500;
+        font-size: clamp(1.35rem, 3vw, 1.85rem);
+      }
+      .top p { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.86rem; max-width: 38rem; line-height: 1.45; }
+      .badge {
+        background: var(--card);
+        border: 1px solid var(--line);
+        padding: 0.65rem 0.85rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+        min-width: 210px;
+      }
+      .badge strong { display: block; color: var(--ink); font-size: 0.92rem; margin-top: 0.2rem; }
+      .live-dot {
+        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        background: var(--up); margin-right: 0.35rem;
+        animation: pulse 1.2s infinite;
+      }
+      .live-dot.off { background: var(--muted); animation: none; }
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(31,122,76,0.45); }
+        70% { box-shadow: 0 0 0 8px rgba(31,122,76,0); }
+        100% { box-shadow: 0 0 0 0 rgba(31,122,76,0); }
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.6rem;
+        margin-bottom: 0.8rem;
+      }
+      .stat, .panel {
+        background: var(--card);
+        border: 1px solid var(--line);
+        padding: 0.8rem 0.85rem;
+      }
+      .stat label, .panel h2 {
+        display: block;
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 0.25rem;
+      }
+      .panel h2 { margin: 0 0 0.7rem; }
+      .stat b { font-family: Georgia, serif; font-size: 1.15rem; font-weight: 500; }
+      .pos { color: var(--up); }
+      .neg { color: var(--down); }
+      .main { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 0.8rem; }
+      .chart-head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: baseline; margin-bottom: 0.45rem; }
+      .price-now { font-family: Georgia, serif; font-size: 1.4rem; transition: color 0.15s ease; }
+      canvas { width: 100%; height: 260px; display: block; background: #fffafc; border: 1px solid var(--line); }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }
+      button {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        padding: 0.5rem 0.75rem;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.86rem;
+      }
+      .buy, .primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+      button:disabled { opacity: 0.35; cursor: not-allowed; }
+      .hint { margin: 0.55rem 0 0; font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
+      .trade-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.55rem; }
+      label.field {
+        display: flex; flex-direction: column; gap: 0.28rem;
+        font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+      }
+      input {
+        border: 1px solid var(--line); padding: 0.5rem 0.55rem; font: inherit; color: var(--ink);
+        background: #fff; width: 100%;
+      }
+      table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+      th, td { text-align: left; padding: 0.42rem 0.2rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { font-size: 0.64rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+      .log { max-height: 150px; overflow: auto; font-size: 0.78rem; line-height: 1.5; color: var(--muted); }
+      .empty { color: var(--muted); font-size: 0.84rem; }
+      .search-wrap { position: relative; margin-bottom: 0.65rem; }
+      .search-results {
+        position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px);
+        background: #fff; border: 1px solid var(--line); max-height: 260px; overflow: auto;
+        display: none;
+      }
+      .search-results.open { display: block; }
+      .search-results button {
+        display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line);
+        background: #fff; padding: 0.55rem 0.65rem;
+      }
+      .search-results button:hover, .watch-item:hover { background: #fff5f9; }
+      .search-results .sym { font-weight: 600; margin-right: 0.4rem; }
+      .search-results .name { color: var(--muted); font-size: 0.8rem; }
+      .watch {
+        display: grid; gap: 0.3rem; max-height: 200px; overflow: auto;
+        border: 1px solid var(--line); padding: 0.35rem;
+      }
+      .watch-item {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 0.4rem;
+        align-items: center;
+        padding: 0.45rem 0.5rem;
+        cursor: pointer;
+        border: 1px solid transparent;
+        background: transparent;
+        width: 100%;
+        text-align: left;
+      }
+      .watch-item.active { border-color: var(--ink); background: #fff8fb; }
+      .watch-item .meta { font-size: 0.75rem; color: var(--muted); }
+      .watch-item .px { font-family: Georgia, serif; font-size: 0.95rem; text-align: right; }
+      .rm {
+        border: 0 !important; background: transparent !important; color: var(--muted);
+        padding: 0.1rem 0.35rem !important; font-size: 1.1rem !important;
+      }
+      .profile-bar {
+        display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+        margin-bottom: 0.75rem;
+      }
+      .profile-bar .who { font-family: Georgia, serif; font-size: 1.05rem; }
+      .linkish {
+        background: transparent; border: 0; color: var(--accent); text-decoration: underline;
+        padding: 0; cursor: pointer; font: inherit; font-size: 0.82rem;
+      }
+      .day-change {
+        margin-left: 0.4rem; font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 600;
+      }
+      .hidden { display: none !important; }
+      .status-line { font-size: 0.8rem; color: var(--muted); min-height: 1.2em; margin: 0.35rem 0 0.2rem; }
+      .tick { font-variant-numeric: tabular-nums; }
+      @media (max-width: 900px) {
+        .main, .stats { grid-template-columns: 1fr; }
+        .top { flex-direction: column; align-items: start; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="gate" id="gate">
+      <h1>Stock Market Simulator</h1>
+      <p>Enter your name to open a portfolio. Search any Yahoo Finance company, trade at the live price, and watch today’s tape move in real time.</p>
+      <form id="startForm">
+        <label class="field">Your name
+          <input id="nameInput" type="text" maxlength="40" placeholder="e.g. Sraghvi" required autocomplete="name" />
+        </label>
+        <label class="field">Starting cash
+          <input id="cashInput" type="number" min="100" step="100" value="10000" required />
+        </label>
+        <button class="primary" type="submit">Open portfolio</button>
+      </form>
+    </div>
+
+    <div class="app hidden" id="app">
+      <div class="top">
+        <div>
+          <h1>Stock Market Simulator</h1>
+          <p>Live 1-minute Yahoo Finance tape for today. The line updates as the market moves — trades fill at the current quote.</p>
+        </div>
+        <div class="badge">
+          <span><span class="live-dot off" id="liveDot"></span>Intraday feed</span>
+          <strong id="sourceLabel">Connecting…</strong>
+        </div>
+      </div>
+
+      <div class="profile-bar">
+        <span class="who">Portfolio: <strong id="investorName">—</strong></span>
+        <button type="button" class="linkish" id="switchName">Change name</button>
+        <span class="status-line tick" id="clock">—</span>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><label>Cash</label><b id="cash">$0.00</b></div>
+        <div class="stat"><label>Holdings value</label><b id="currentValue">$0.00</b></div>
+        <div class="stat"><label>Total equity</label><b id="equity">$0.00</b></div>
+        <div class="stat"><label>P / L</label><b id="pnl">$0.00</b></div>
+      </div>
+
+      <div class="main">
+        <section class="panel">
+          <h2>Find a company</h2>
+          <div class="search-wrap">
+            <input id="searchInput" type="search" placeholder="Search Yahoo Finance — Apple, Tesla, NVDA…" autocomplete="off" />
+            <div class="search-results" id="searchResults"></div>
+          </div>
+          <p class="status-line" id="searchStatus">Type a company or ticker, then click a result.</p>
+
+          <h2>Watchlist</h2>
+          <div class="watch" id="watchlist"></div>
+
+          <div class="chart-head" style="margin-top:0.9rem">
+            <h2 id="chartTitle" style="margin:0">Today’s live path</h2>
+            <div class="price-now tick" id="priceNow">—</div>
+          </div>
+          <div class="actions" style="margin:0.35rem 0 0.45rem">
+            <button type="button" id="zoomLive" class="buy">Last 5 min</button>
+            <button type="button" id="zoomDay">Full day</button>
+          </div>
+          <canvas id="chart" width="800" height="260"></canvas>
+          <p class="hint tick" id="asOf">Waiting for live tape…</p>
+        </section>
+
+        <section class="panel">
+          <h2>Buy / Sell <span id="selectedLabel"></span></h2>
+          <div class="trade-row">
+            <label class="field">Shares
+              <input id="qty" type="number" min="1" step="1" value="1" />
+            </label>
+            <label class="field">Order total
+              <input id="orderValue" type="text" readonly value="$0.00" />
+            </label>
+          </div>
+          <div class="actions">
+            <button class="buy" id="buyBtn" type="button">BUY</button>
+            <button id="sellBtn" type="button">SELL</button>
+            <button id="refreshBtn" type="button">Refresh now</button>
+          </div>
+          <p class="hint" id="tradeHint">Select a company first.</p>
+
+          <h2 style="margin-top:1rem">What you own</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Shares</th>
+                <th>Live</th>
+                <th>Value</th>
+                <th>Avg buy</th>
+                <th>P / L</th>
+              </tr>
+            </thead>
+            <tbody id="holdingsBody">
+              <tr><td colspan="6" class="empty">Nothing bought yet.</td></tr>
+            </tbody>
+          </table>
+
+          <h2 style="margin-top:1rem">Purchase history</h2>
+          <div class="log" id="log">No trades yet.</div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const money = (n) =>
+        n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+
+      const NYC = 'America/New_York';
+      const nycTime = (date = new Date()) =>
+        date.toLocaleString('en-US', {
+          timeZone: NYC,
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
+      const nycDateTime = (date = new Date()) =>
+        date.toLocaleString('en-US', {
+          timeZone: NYC,
+          month: 'numeric',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        }) + ' ET';
+
+      const POPULAR = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'NFLX'];
+
+      const state = {
+        investor: null,
+        startingCash: 10000,
+        cash: 10000,
+        watchlist: [],
+        stocks: {},
+        holdings: {},
+        buys: {},
+        transactions: [],
+        selected: null,
+        live: false,
+        searchTimer: null,
+        pollTimer: null,
+        loading: new Set(),
+        lastPriceFlash: null,
+        chartZoom: 'live', // 'live' = last 30 min (tight scale), 'day' = full session
+        displayPrice: null,
+        targetPrice: null,
+        rafId: null,
+        tipPulse: 0,
+        lastTickDelta: 0,
+        selectedPollTimer: null,
+        pollInFlight: false,
+      };
+
+      const el = (id) => document.getElementById(id);
+
+      function priceOf(ticker) {
+        const s = state.stocks[ticker];
+        if (!s) throw new Error(`No data for ${ticker}`);
+        if (s.livePrice != null) return s.livePrice;
+        const pts = s.intraday || [];
+        if (pts.length) return pts[pts.length - 1].close;
+        throw new Error(`No live price for ${ticker}`);
+      }
+
+      function summary() {
+        let holdingsValue = 0;
+        Object.entries(state.holdings).forEach(([ticker, qty]) => {
+          if (qty > 0) holdingsValue += priceOf(ticker) * qty;
+        });
+        const equity = state.cash + holdingsValue;
+        return {
+          holdingsValue,
+          equity,
+          pnl: equity - state.startingCash,
+        };
+      }
+
+      function trade(ticker, type, quantity) {
+        const price = priceOf(ticker);
+        const total = price * quantity;
+        const date = new Date().toISOString().slice(0, 10);
+        if (type === 'BUY') {
+          if (state.cash < total) throw new Error('Not enough cash.');
+          state.cash -= total;
+          state.holdings[ticker] = (state.holdings[ticker] || 0) + quantity;
+          if (!state.buys[ticker]) state.buys[ticker] = [];
+          state.buys[ticker].push({ qty: quantity, price, date });
+        } else {
+          const owned = state.holdings[ticker] || 0;
+          if (owned < quantity) throw new Error('You do not own that many shares.');
+          state.holdings[ticker] = owned - quantity;
+          state.cash += total;
+          let left = quantity;
+          const lots = state.buys[ticker] || [];
+          while (left > 0 && lots.length) {
+            const take = Math.min(lots[0].qty, left);
+            lots[0].qty -= take;
+            left -= take;
+            if (lots[0].qty === 0) lots.shift();
+          }
+        }
+        state.transactions.unshift({
+          type,
+          ticker,
+          name: state.stocks[ticker]?.name || ticker,
+          quantity,
+          price,
+          total,
+          time: nycDateTime(),
+        });
+      }
+
+      function drawChart() {
+        const canvas = el('chart');
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        const pad = { t: 18, r: 22, b: 28, l: 52 };
+        ctx.clearRect(0, 0, w, h);
+
+        const ticker = state.selected;
+        if (!ticker || !state.stocks[ticker]) return;
+        const stock = state.stocks[ticker];
+        let series = (stock.intraday || []).map((p) => ({ t: p.t, close: p.close }));
+        if (!series.length) return;
+
+        // One live tip at "now" — rebuilt every frame so the line advances continuously
+        const live = state.displayPrice != null ? state.displayPrice : stock.livePrice;
+        if (live != null) {
+          series.push({ t: Date.now(), close: live });
+        }
+
+        // Zoom to last 5 minutes so live motion reads clearly on screen
+        if (state.chartZoom === 'live') {
+          const cutoff = series[series.length - 1].t - 5 * 60 * 1000;
+          const zoomed = series.filter((p) => p.t >= cutoff);
+          if (zoomed.length >= 2) series = zoomed;
+          else series = series.slice(-20);
+        }
+
+        const values = series.map((p) => p.close);
+        let min = Math.min(...values);
+        let max = Math.max(...values);
+        // Pad y-scale so movement reads clearly (at least ~0.4% band)
+        const mid = (min + max) / 2;
+        const minSpan = Math.max(mid * 0.0015, 0.05);
+        if (max - min < minSpan) {
+          min = mid - minSpan / 2;
+          max = mid + minSpan / 2;
+        } else {
+          const padY = (max - min) * 0.12;
+          min -= padY;
+          max += padY;
+        }
+        const span = Math.max(max - min, 0.01);
+        const t0 = series[0].t;
+        const t1 = Math.max(series[series.length - 1].t, t0 + 1);
+        const open = stock.previousClose ?? series[0].close;
+        const up = series[series.length - 1].close >= (series[0].close);
+
+        if (open >= min && open <= max) {
+          const yOpen = pad.t + ((max - open) / span) * (h - pad.t - pad.b);
+          ctx.strokeStyle = 'rgba(61,15,36,0.18)';
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(pad.l, yOpen);
+          ctx.lineTo(w - pad.r, yOpen);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        ctx.strokeStyle = 'rgba(61,15,36,0.07)';
+        for (let i = 0; i < 4; i += 1) {
+          const y = pad.t + ((h - pad.t - pad.b) * i) / 3;
+          ctx.beginPath();
+          ctx.moveTo(pad.l, y);
+          ctx.lineTo(w - pad.r, y);
+          ctx.stroke();
+        }
+
+        const xAt = (t) => pad.l + ((t - t0) / (t1 - t0)) * (w - pad.l - pad.r);
+        const yAt = (c) => pad.t + ((max - c) / span) * (h - pad.t - pad.b);
+
+        ctx.beginPath();
+        series.forEach((p, i) => {
+          const x = xAt(p.t);
+          const y = yAt(p.close);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        const lastX = xAt(series[series.length - 1].t);
+        ctx.lineTo(lastX, h - pad.b);
+        ctx.lineTo(pad.l, h - pad.b);
+        ctx.closePath();
+        ctx.fillStyle = up ? 'rgba(193,85,148,0.14)' : 'rgba(142,90,114,0.14)';
+        ctx.fill();
+
+        ctx.strokeStyle = up ? '#c15594' : '#8e5a72';
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        series.forEach((p, i) => {
+          const x = xAt(p.t);
+          const y = yAt(p.close);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        const tip = series[series.length - 1];
+        const lx = xAt(tip.t);
+        const ly = yAt(tip.close);
+        if (state.tipPulse > 0) {
+          ctx.strokeStyle = up ? 'rgba(193,85,148,0.45)' : 'rgba(142,90,114,0.45)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(lx, ly, 4.5 + state.tipPulse * 10, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#3d0f24';
+        ctx.beginPath();
+        ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#8e5a72';
+        ctx.font = '11px DM Sans, sans-serif';
+        ctx.fillText(money(max), 4, pad.t + 4);
+        ctx.fillText(money(min), 4, h - pad.b);
+      }
+
+      function animatePriceTo(target) {
+        if (target == null || Number.isNaN(target)) return;
+        if (state.displayPrice == null) state.displayPrice = target;
+        if (state.targetPrice != null && target !== state.targetPrice) {
+          state.lastTickDelta = target - state.targetPrice;
+          state.tipPulse = 1;
+        }
+        state.targetPrice = target;
+      }
+
+      function tickFrame() {
+        if (!state.investor) {
+          state.rafId = null;
+          return;
+        }
+
+        // Ease displayed price toward live quote every animation frame (~16ms)
+        if (state.targetPrice != null) {
+          if (state.displayPrice == null) state.displayPrice = state.targetPrice;
+          const diff = state.targetPrice - state.displayPrice;
+          if (Math.abs(diff) > 0.00001) {
+            state.displayPrice += diff * 0.85; // near-instant follow
+          } else {
+            state.displayPrice = state.targetPrice;
+          }
+        }
+
+        if (state.tipPulse > 0) state.tipPulse = Math.max(0, state.tipPulse - 0.06);
+
+        // Continuously redraw so the tip never looks frozen
+        if (state.selected && state.stocks[state.selected]) {
+          const stock = state.stocks[state.selected];
+          const shown = state.displayPrice != null ? state.displayPrice : stock.livePrice;
+          const pct = stock.changePercent ?? 0;
+          const tick = state.lastTickDelta;
+          if (shown != null) {
+            el('priceNow').innerHTML =
+              `${money(shown)}` +
+              `<span class="day-change ${pct >= 0 ? 'pos' : 'neg'}">${pct >= 0 ? '▲' : '▼'} ${
+                pct >= 0 ? '+' : ''
+              }${pct.toFixed(2)}%</span>` +
+              (tick
+                ? `<span class="day-change ${tick >= 0 ? 'pos' : 'neg'}" style="opacity:0.85">tick ${
+                    tick >= 0 ? '+' : ''
+                  }${tick.toFixed(2)}</span>`
+                : '');
+          }
+          el('clock').textContent = `NYC ${nycTime()}`;
+          if (stock.asOf) {
+            el('asOf').textContent = `${
+              state.chartZoom === 'live' ? 'Zoomed live tape' : 'Full-day tape'
+            } · ${stock.intraday?.length || 0} bars · updated ${stock.asOf} · streaming`;
+          }
+          try {
+            const s = summary();
+            el('currentValue').textContent = money(s.holdingsValue);
+            el('equity').textContent = money(s.equity);
+            el('pnl').textContent = `${s.pnl >= 0 ? '+' : ''}${money(s.pnl)}`;
+            el('pnl').className = s.pnl >= 0 ? 'pos' : 'neg';
+          } catch (_) {}
+          drawChart();
+        }
+
+        state.rafId = requestAnimationFrame(tickFrame);
+      }
+
+      function startRealtimeLoop() {
+        if (state.rafId) cancelAnimationFrame(state.rafId);
+        state.rafId = requestAnimationFrame(tickFrame);
+      }
+
+      function render() {
+        if (!state.investor) return;
+        const s = summary();
+        const qty = Math.max(1, Math.floor(Number(el('qty').value) || 1));
+
+        el('investorName').textContent = state.investor;
+        el('cash').textContent = money(state.cash);
+        el('currentValue').textContent = money(s.holdingsValue);
+        el('equity').textContent = money(s.equity);
+        el('pnl').textContent = `${s.pnl >= 0 ? '+' : ''}${money(s.pnl)}`;
+        el('pnl').className = s.pnl >= 0 ? 'pos' : 'neg';
+        el('liveDot').classList.toggle('off', !state.live);
+        el('clock').textContent = `NYC ${nycTime()}`;
+
+        // Watchlist
+        const watch = el('watchlist');
+        if (!state.watchlist.length) {
+          watch.innerHTML = `<div class="empty">Search a company, or tap a quick add:
+            <div class="actions">${POPULAR.map(
+              (t) => `<button type="button" data-add="${t}">${t}</button>`
+            ).join('')}</div></div>`;
+        } else {
+          watch.innerHTML = state.watchlist
+            .map((ticker) => {
+              const stock = state.stocks[ticker];
+              let px = '…';
+              let chg = '';
+              if (stock?.livePrice != null) {
+                px = money(stock.livePrice);
+                const pct = stock.changePercent ?? 0;
+                chg = `<span class="${pct >= 0 ? 'pos' : 'neg'}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>`;
+              }
+              return `<button type="button" class="watch-item ${
+                ticker === state.selected ? 'active' : ''
+              }" data-select="${ticker}">
+                <div>
+                  <strong>${ticker}</strong>
+                  <div class="meta">${stock?.name || ''}</div>
+                </div>
+                <div class="px tick">${px}<div class="meta">${chg}</div></div>
+                <span class="rm" data-remove="${ticker}" title="Remove">×</span>
+              </button>`;
+            })
+            .join('');
+        }
+
+        const ticker = state.selected;
+        if (ticker && state.stocks[ticker]) {
+          const stock = state.stocks[ticker];
+          const price = priceOf(ticker);
+          const pct = stock.changePercent ?? 0;
+          const owned = state.holdings[ticker] || 0;
+          el('selectedLabel').textContent = `· ${ticker}`;
+          el('chartTitle').textContent =
+            state.chartZoom === 'live'
+              ? `${ticker} · ${stock.name || ''} · last 5 min`
+              : `${ticker} · ${stock.name || ''} · today`;
+          if (state.lastPriceFlash == null) {
+            state.displayPrice = price;
+            state.targetPrice = price;
+            state.lastPriceFlash = price;
+          } else if (price !== state.lastPriceFlash) {
+            animatePriceTo(price);
+            state.lastPriceFlash = price;
+          }
+          const shown = state.displayPrice != null ? state.displayPrice : price;
+          const tick = state.lastTickDelta;
+          el('priceNow').innerHTML =
+            `${money(shown)}` +
+            `<span class="day-change ${pct >= 0 ? 'pos' : 'neg'}">${pct >= 0 ? '▲' : '▼'} ${
+              pct >= 0 ? '+' : ''
+            }${pct.toFixed(2)}%</span>` +
+            (tick
+              ? `<span class="day-change ${tick >= 0 ? 'pos' : 'neg'}" style="opacity:0.85">tick ${
+                  tick >= 0 ? '+' : ''
+                }${tick.toFixed(2)}</span>`
+              : '');
+          el('orderValue').value = money(price * qty);
+          el('buyBtn').disabled = state.cash < price * qty || state.loading.has(ticker);
+          el('sellBtn').disabled = owned < qty;
+          el('tradeHint').textContent =
+            owned > 0
+              ? `You own ${owned} ${ticker}. Order costs/pays ${money(price * qty)} at the live quote.`
+              : `Buying ${qty} ${ticker} costs ${money(price * qty)} at the live quote.`;
+          el('asOf').textContent = stock.asOf
+            ? `${state.chartZoom === 'live' ? 'Zoomed live tape' : 'Full-day tape'} · ${
+                stock.intraday?.length || 0
+              } bars · updated ${stock.asOf}`
+            : 'Loading intraday bars…';
+          el('zoomLive').classList.toggle('buy', state.chartZoom === 'live');
+          el('zoomDay').classList.toggle('buy', state.chartZoom === 'day');
+        } else {
+          el('selectedLabel').textContent = '';
+          el('chartTitle').textContent = 'Today’s live path';
+          el('priceNow').textContent = '—';
+          el('orderValue').value = '$0.00';
+          el('buyBtn').disabled = true;
+          el('sellBtn').disabled = true;
+          el('tradeHint').textContent = 'Select a company first.';
+          el('asOf').textContent = 'Add a ticker to stream today’s tape.';
+        }
+
+        const rows = Object.entries(state.holdings).filter(([, q]) => q > 0);
+        el('holdingsBody').innerHTML = rows.length
+          ? rows
+              .map(([t, q]) => {
+                const price = priceOf(t);
+                const lots = state.buys[t] || [];
+                const lotQty = lots.reduce((a, l) => a + l.qty, 0);
+                const lotCost = lots.reduce((a, l) => a + l.qty * l.price, 0);
+                const avg = lotQty ? lotCost / lotQty : price;
+                const value = price * q;
+                const pnl = value - avg * q;
+                return `<tr data-select-row="${t}" style="cursor:pointer">
+                  <td><strong>${t}</strong><div class="meta" style="font-size:0.75rem;color:var(--muted)">${
+                    state.stocks[t]?.name || ''
+                  }</div></td>
+                  <td>${q}</td>
+                  <td class="tick">${money(price)}</td>
+                  <td class="tick">${money(value)}</td>
+                  <td class="tick">${money(avg)}</td>
+                  <td class="tick ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}${money(pnl)}</td>
+                </tr>`;
+              })
+              .join('')
+          : '<tr><td colspan="6" class="empty">Nothing bought yet.</td></tr>';
+
+        const history = state.transactions.map(
+          (t) =>
+            `<div><strong>${t.type}</strong> ${t.quantity} ${t.ticker} (${t.name}) @ ${money(
+              t.price
+            )} = ${money(t.total)} · ${t.time}</div>`
+        );
+        Object.entries(state.buys).forEach(([t, lots]) => {
+          lots
+            .filter((l) => l.qty > 0)
+            .forEach((l) => {
+              history.push(
+                `<div style="opacity:0.85">OPEN LOT ${t}: ${l.qty} @ ${money(l.price)} on ${l.date}</div>`
+              );
+            });
+        });
+        el('log').innerHTML = history.length ? history.slice(0, 50).join('') : 'No trades yet.';
+
+        drawChart();
+      }
+
+      function parseIntraday(json) {
+        const result = json?.chart?.result?.[0];
+        if (!result) throw new Error('Ticker not found on Yahoo Finance');
+        const quote = result.indicators?.quote?.[0] || {};
+        const timestamps = result.timestamp || [];
+        const meta = result.meta || {};
+        const intraday = [];
+        for (let i = 0; i < timestamps.length; i += 1) {
+          const close = quote.close?.[i];
+          if (close == null || Number.isNaN(close)) continue;
+          intraday.push({
+            t: timestamps[i] * 1000,
+            close: Number(close),
+          });
+        }
+        const live =
+          meta.regularMarketPrice ??
+          meta.postMarketPrice ??
+          meta.preMarketPrice ??
+          intraday.at(-1)?.close;
+        if (live == null) throw new Error('No live quote available');
+        const prev =
+          meta.chartPreviousClose ??
+          meta.previousClose ??
+          intraday[0]?.close ??
+          live;
+        return {
+          name: meta.longName || meta.shortName || meta.symbol,
+          exchange: meta.exchangeName || '',
+          intraday,
+          livePrice: Number(live),
+          previousClose: Number(prev),
+          changePercent: Number((((live - prev) / prev) * 100).toFixed(2)),
+          asOf: nycDateTime(
+            new Date(
+              (meta.regularMarketTime || timestamps.at(-1) || Date.now() / 1000) * 1000
+            )
+          ),
+        };
+      }
+
+      async function loadTicker(ticker, { select = true, silent = false } = {}) {
+        const symbol = String(ticker).trim().toUpperCase();
+        if (!symbol) return;
+        if (!silent) state.loading.add(symbol);
+        if (!silent) render();
+        try {
+          const url = `/api/yahoo/chart/${encodeURIComponent(
+            symbol
+          )}?range=1d&interval=1m&_=${Date.now()}`;
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`Could not load ${symbol}`);
+          const parsed = parseIntraday(await res.json());
+          state.stocks[symbol] = parsed;
+          if (!state.watchlist.includes(symbol)) state.watchlist.unshift(symbol);
+          if (select) state.selected = symbol;
+          state.live = true;
+          el('sourceLabel').textContent = 'Yahoo Finance · live 1-min';
+          if (!silent) el('searchStatus').textContent = `${symbol} streaming today’s tape.`;
+          if (select) {
+            animatePriceTo(parsed.livePrice);
+            state.lastPriceFlash = parsed.livePrice;
+          }
+        } finally {
+          if (!silent) {
+            state.loading.delete(symbol);
+            render();
+          }
+        }
+      }
+
+      async function refreshAll() {
+        const list = [...state.watchlist];
+        if (!list.length) return;
+        // Always refresh selected first for snappy chart motion
+        const ordered = state.selected
+          ? [state.selected, ...list.filter((t) => t !== state.selected)]
+          : list;
+        await Promise.all(
+          ordered.map(async (ticker) => {
+            try {
+              const url = `/api/yahoo/chart/${encodeURIComponent(
+                ticker
+              )}?range=1d&interval=1m&_=${Date.now()}`;
+              const res = await fetch(url, { cache: 'no-store' });
+              if (!res.ok) return;
+              state.stocks[ticker] = parseIntraday(await res.json());
+              state.live = true;
+              el('sourceLabel').textContent = 'Yahoo Finance · live 1-min';
+            } catch (_) {}
+          })
+        );
+        render();
+      }
+
+      async function runSearch(query) {
+        const q = query.trim();
+        const box = el('searchResults');
+        if (q.length < 1) {
+          box.classList.remove('open');
+          box.innerHTML = '';
+          return;
+        }
+        el('searchStatus').textContent = `Searching “${q}”…`;
+        try {
+          const res = await fetch(`/api/yahoo/search?q=${encodeURIComponent(q)}`);
+          if (!res.ok) throw new Error('Search failed');
+          const data = await res.json();
+          const quotes = (data.quotes || []).filter((row) => row.symbol);
+          if (!quotes.length) {
+            box.innerHTML = `<button type="button" disabled>No matches — press Enter to try exact ticker</button>`;
+            box.classList.add('open');
+            return;
+          }
+          box.innerHTML = quotes
+            .slice(0, 12)
+            .map((row) => {
+              const name = row.shortname || row.longname || row.symbol;
+              const exch = row.exchDisp || row.exchange || '';
+              return `<button type="button" data-pick="${row.symbol}">
+                <span class="sym">${row.symbol}</span>
+                <span class="name">${name}${exch ? ` · ${exch}` : ''}</span>
+              </button>`;
+            })
+            .join('');
+          box.classList.add('open');
+          el('searchStatus').textContent = 'Click a result to stream it.';
+        } catch (err) {
+          el('searchStatus').textContent = `${err.message}. Press Enter for exact ticker.`;
+          box.classList.remove('open');
+        }
+      }
+
+      function startPolling() {
+        if (state.pollTimer) clearInterval(state.pollTimer);
+        if (state.selectedPollTimer) clearInterval(state.selectedPollTimer);
+        startRealtimeLoop();
+
+        // Fastest stable Yahoo refresh (~10 req/sec for selected ticker)
+        state.selectedPollTimer = setInterval(() => {
+          if (!state.selected || state.pollInFlight) return;
+          state.pollInFlight = true;
+          loadTicker(state.selected, { select: true, silent: true })
+            .catch(() => {})
+            .finally(() => {
+              state.pollInFlight = false;
+            });
+        }, 100);
+
+        state.pollTimer = setInterval(() => {
+          refreshAll();
+        }, 5000);
+      }
+
+      function openPortfolio(name, cash) {
+        state.investor = name;
+        state.startingCash = cash;
+        state.cash = cash;
+        state.holdings = {};
+        state.buys = {};
+        state.transactions = [];
+        state.watchlist = [];
+        state.selected = null;
+        el('gate').classList.add('hidden');
+        el('app').classList.remove('hidden');
+        render();
+        // Seed with liquid names, then stream AAPL
+        (async () => {
+          try {
+            await loadTicker('AAPL', { select: true });
+            await Promise.allSettled(
+              ['MSFT', 'GOOGL', 'NVDA', 'TSLA'].map((t) => loadTicker(t, { select: false }))
+            );
+            startPolling();
+          } catch (err) {
+            el('sourceLabel').textContent = err.message;
+          }
+        })();
+      }
+
+      // --- Events (stable, no rebinding) ---
+      el('startForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = el('nameInput').value.trim();
+        const cash = Math.max(100, Number(el('cashInput').value) || 10000);
+        if (!name) return;
+        openPortfolio(name, cash);
+      });
+
+      el('switchName').addEventListener('click', () => {
+        if (!confirm('Start a new portfolio? This clears current holdings.')) return;
+        if (state.pollTimer) clearInterval(state.pollTimer);
+        if (state.selectedPollTimer) clearInterval(state.selectedPollTimer);
+        if (state.rafId) cancelAnimationFrame(state.rafId);
+        state.rafId = null;
+        state.investor = null;
+        el('app').classList.add('hidden');
+        el('gate').classList.remove('hidden');
+      });
+
+      el('searchInput').addEventListener('input', () => {
+        clearTimeout(state.searchTimer);
+        state.searchTimer = setTimeout(() => runSearch(el('searchInput').value), 250);
+      });
+
+      el('searchInput').addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const raw = el('searchInput').value.trim().toUpperCase().split(/\s+/)[0];
+        if (!raw) return;
+        try {
+          await loadTicker(raw, { select: true });
+          el('searchResults').classList.remove('open');
+          el('searchInput').value = '';
+        } catch (err) {
+          el('searchStatus').textContent = err.message;
+          alert(err.message);
+        }
+      });
+
+      el('searchResults').addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-pick]');
+        if (!btn) return;
+        try {
+          await loadTicker(btn.dataset.pick, { select: true });
+          el('searchResults').classList.remove('open');
+          el('searchInput').value = '';
+        } catch (err) {
+          el('searchStatus').textContent = err.message;
+          alert(err.message);
+        }
+      });
+
+      el('watchlist').addEventListener('click', async (e) => {
+        const add = e.target.closest('[data-add]');
+        if (add) {
+          try {
+            await loadTicker(add.dataset.add, { select: true });
+          } catch (err) {
+            alert(err.message);
+          }
+          return;
+        }
+        const remove = e.target.closest('[data-remove]');
+        if (remove) {
+          e.preventDefault();
+          e.stopPropagation();
+          const t = remove.dataset.remove;
+          if ((state.holdings[t] || 0) > 0) {
+            alert('Sell your shares before removing this company.');
+            return;
+          }
+          state.watchlist = state.watchlist.filter((x) => x !== t);
+          if (state.selected === t) state.selected = state.watchlist[0] || null;
+          render();
+          return;
+        }
+        const select = e.target.closest('[data-select]');
+        if (select) {
+          state.selected = select.dataset.select;
+          state.lastPriceFlash = null;
+          render();
+          loadTicker(state.selected, { select: true }).catch(() => {});
+        }
+      });
+
+      el('holdingsBody').addEventListener('click', (e) => {
+        const row = e.target.closest('[data-select-row]');
+        if (!row) return;
+        state.selected = row.dataset.selectRow;
+        state.lastPriceFlash = null;
+        render();
+      });
+
+      el('qty').addEventListener('input', render);
+
+      el('buyBtn').addEventListener('click', () => {
+        if (!state.selected) return alert('Select a company first.');
+        const qty = Math.max(1, Math.floor(Number(el('qty').value) || 1));
+        try {
+          trade(state.selected, 'BUY', qty);
+          render();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+
+      el('sellBtn').addEventListener('click', () => {
+        if (!state.selected) return alert('Select a company first.');
+        const qty = Math.max(1, Math.floor(Number(el('qty').value) || 1));
+        try {
+          trade(state.selected, 'SELL', qty);
+          render();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+
+      el('refreshBtn').addEventListener('click', () => {
+        refreshAll();
+      });
+
+      el('zoomLive').addEventListener('click', () => {
+        state.chartZoom = 'live';
+        render();
+      });
+      el('zoomDay').addEventListener('click', () => {
+        state.chartZoom = 'day';
+        render();
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.search-wrap')) el('searchResults').classList.remove('open');
+      });
+    </script>
+  </body>
+</html>

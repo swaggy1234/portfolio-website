@@ -4,9 +4,8 @@ import './InteractiveText.css';
 
 /**
  * INTERACTIVE LETTER EFFECT
- * Colors change ONLY when the cursor hovers over letters,
- * then fade back to the default text color after ~1 second.
- * Edit palette in index.css; adjust radius/timing below.
+ * Default: white. On cursor proximity, letters shift through the color palette,
+ * then fade back to white after ~1 second.
  */
 
 const COLOR_PALETTE = [
@@ -18,7 +17,7 @@ const COLOR_PALETTE = [
   'var(--color-green)',
 ];
 
-const DEFAULT_COLOR = 'var(--color-wine)';
+const DEFAULT_COLOR = '#ffffff';
 const INFLUENCE_RADIUS = 120;
 const FADE_MIN = 700;
 const FADE_MAX = 1100;

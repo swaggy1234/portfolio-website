@@ -48,7 +48,7 @@ export const projects = [
     image: '/images/visprom-cover.png',
     imageFit: 'contain',
     link: '/visprom/index.html',
-    github: 'https://github.com/swaggy1234/visprom',
+    github: 'https://github.com/MIA-PS-Vis/UPSaclay-VisProm',
     popup: 'visprom',
     popupUrl: '/visprom/index.html',
     popupTitle: '@ VISPROM ONLINE :)',

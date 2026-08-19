@@ -141,7 +141,7 @@ export default function Hero({ stageRef }) {
     HERO_TEXT_THEME === 'dark' ? 'hero--text-dark' : '',
     HERO_LAYOUT === 'split' ? 'hero--split' : '',
     HERO_LAYOUT === 'centered' ? 'hero--centered' : '',
-    HERO_VIDEO ? 'hero--allow-overflow hero--video-hero' : '',
+    HERO_VIDEO ? 'hero--video-hero' : '',
     LAYOUT_EDIT_MODE && layoutEditActive ? 'hero--layout-edit' : '',
   ]
     .filter(Boolean)

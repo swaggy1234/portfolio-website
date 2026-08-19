@@ -8,14 +8,14 @@
   overflow: visible;
 }
 
-/* Viewport-locked: same vw/vh in edit mode and after save */
+/* Viewport-locked: absolute inside the hero so it clips on scroll */
 .hero-video--viewport {
-  position: fixed;
+  position: absolute;
 }
 
-/* Edit mode: same fixed coords as locked, but above the text layer */
+/* Edit mode: same positioning, above the text layer */
 .hero-video--viewport-edit {
-  position: fixed;
+  position: absolute;
   z-index: 100;
 }
 

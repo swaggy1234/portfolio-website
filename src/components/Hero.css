@@ -139,8 +139,6 @@
   max-height: 100dvh;
   box-sizing: border-box;
   isolation: isolate;
-  /* Fixed-position video stickers scroll with the hero, not the page */
-  transform: translateZ(0);
 }
 
 .hero--video-hero .hero-video,

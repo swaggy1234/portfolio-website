@@ -150,6 +150,10 @@ export default function HeroVideo({
   const canvasRef = useRef(null);
   const parentRef = useRef(null);
   const rotationRef = useRef(layout.rotation || 0);
+  const loopCountRef = useRef(0);
+  const [loopRotation, setLoopRotation] = useState(0);
+  const loopRotationRef = useRef(0);
+  loopRotationRef.current = loopRotation;
   const [nativeAspect, setNativeAspect] = useState(null);
   const aspectRatio = nativeAspect ?? layout.aspectRatio ?? 9 / 16;
   const aspectRatioRef = useRef(aspectRatio);
@@ -185,19 +189,30 @@ export default function HeroVideo({
     if (!video) return undefined;
 
     video.playbackRate = playbackRate;
-    video.loop = loop;
+    video.loop = false;
+    video.removeAttribute('loop');
     video.muted = true;
     video.playsInline = true;
-    if (loop) video.setAttribute('loop', '');
-    else video.removeAttribute('loop');
+
+    const ROTATE_EVERY = 15;
+    let hasRotatedThisCycle = false;
 
     const play = () => {
       if (video.paused) video.play().catch(() => {});
     };
 
     const restart = () => {
+      hasRotatedThisCycle = false;
       video.currentTime = 0;
       play();
+    };
+
+    const onTimeUpdate = () => {
+      if (!hasRotatedThisCycle && video.currentTime >= ROTATE_EVERY) {
+        hasRotatedThisCycle = true;
+        loopCountRef.current += 1;
+        setLoopRotation((prev) => (prev + 90) % 360);
+      }
     };
 
     const onEnded = () => {
@@ -215,7 +230,7 @@ export default function HeroVideo({
     video.addEventListener('loadedmetadata', syncAspect);
     video.addEventListener('loadeddata', play);
     video.addEventListener('canplay', play);
-    video.addEventListener('playing', play);
+    video.addEventListener('timeupdate', onTimeUpdate);
     video.addEventListener('ended', onEnded);
 
     const onVisible = () => {
@@ -227,7 +242,7 @@ export default function HeroVideo({
       video.removeEventListener('loadedmetadata', syncAspect);
       video.removeEventListener('loadeddata', play);
       video.removeEventListener('canplay', play);
-      video.removeEventListener('playing', play);
+      video.removeEventListener('timeupdate', onTimeUpdate);
       video.removeEventListener('ended', onEnded);
       document.removeEventListener('visibilitychange', onVisible);
     };
@@ -287,10 +302,20 @@ export default function HeroVideo({
       resize();
       if (video.readyState >= 2 && canvas.width > 0 && canvas.height > 0) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const lr = loopRotationRef.current;
+        if (lr !== 0) {
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate((lr * Math.PI) / 180);
+          ctx.translate(-canvas.width / 2, -canvas.height / 2);
+        }
         if (fillLayout) {
           drawImageCover(ctx, video, canvas.width, canvas.height, fillRotation);
         } else {
           drawImageContain(ctx, video, canvas.width, canvas.height);
+        }
+        if (lr !== 0) {
+          ctx.restore();
         }
         try {
           const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -527,16 +552,17 @@ export default function HeroVideo({
     .filter(Boolean)
     .join(' ');
 
+  const loopTransform = loopRotation !== 0 ? { transform: `rotate(${loopRotation}deg)` } : undefined;
+
   const media = (
     <>
       <video
         ref={videoRef}
         className={showCanvas ? 'hero-video__source' : 'hero-video__el'}
-        style={blendStyle}
+        style={{ ...blendStyle, ...(!showCanvas ? loopTransform : undefined) }}
         src={src}
         muted
         playsInline
-        loop={loop}
         autoPlay
         preload="auto"
       />

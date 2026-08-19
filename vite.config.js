@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -192,6 +193,45 @@ function yahooFinanceProxyPlugin() {
   };
 }
 
+function restoreVideosPlugin() {
+  const VIDEO_FILES = [
+    'public/videos/hero-koi.mp4',
+    'public/videos/hero-pour.mp4',
+    'public/videos/intro-pour.mp4',
+    'public/gallery/process.mp4',
+    'public/gallery/pierrot-process.mp4',
+  ];
+
+  function restore() {
+    const root = path.resolve(process.cwd());
+    let restored = 0;
+    for (const f of VIDEO_FILES) {
+      const full = path.resolve(root, f);
+      let needsRestore = false;
+      try {
+        if (!fs.existsSync(full)) needsRestore = true;
+        else if (fs.statSync(full).size < 1024) needsRestore = true;
+      } catch { needsRestore = true; }
+      if (needsRestore) {
+        try {
+          execSync(`git checkout HEAD -- "${f}"`, { cwd: root, stdio: 'pipe' });
+          console.log(`[restore-videos] Restored ${f}`);
+          restored++;
+        } catch {
+          console.warn(`[restore-videos] Could not restore ${f}`);
+        }
+      }
+    }
+    if (restored > 0) console.log(`[restore-videos] Restored ${restored} video(s).`);
+  }
+
+  return {
+    name: 'restore-videos',
+    buildStart() { restore(); },
+    configureServer() { restore(); },
+  };
+}
+
 function lockLayoutPlugin() {
   return {
     name: 'lock-layout',
@@ -328,7 +368,7 @@ export function resolveSticker(sticker) {
 }
 
 export default defineConfig({
-  plugins: [react(), ensureRoboticsPdfPlugin(), yahooFinanceProxyPlugin(), lockLayoutPlugin()],
+  plugins: [react(), restoreVideosPlugin(), ensureRoboticsPdfPlugin(), yahooFinanceProxyPlugin(), lockLayoutPlugin()],
   assetsInclude: ['**/*.pdf'],
   server: {
     watch: {

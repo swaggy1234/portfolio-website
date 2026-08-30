@@ -91,6 +91,84 @@
   flex-shrink: 0;
 }
 
+.visprom-popup__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  padding: 0.55rem 0.65rem 0;
+  background: #fff7fb;
+  border-bottom: 2px solid #000000;
+}
+
+.visprom-popup__tab {
+  appearance: none;
+  border: 1.5px solid #000000;
+  background: #f8d7e8;
+  color: #000000;
+  font-family: 'Press Start 2P', 'Courier New', monospace;
+  font-size: 0.42rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+}
+
+.visprom-popup__tab--active {
+  background: #ffffff;
+  box-shadow: inset 0 -2px 0 #6b1a3d;
+}
+
+.visprom-popup__frame--app-slot {
+  border: 2px dashed #6b1a3d;
+  background: repeating-linear-gradient(
+    -45deg,
+    #fff7fb,
+    #fff7fb 8px,
+    #fce8f2 8px,
+    #fce8f2 16px
+  );
+  display: grid;
+  place-items: center;
+}
+
+.visprom-popup__app-slot-label {
+  font-family: 'Press Start 2P', 'Courier New', monospace;
+  font-size: 0.42rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b1a3d;
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+.visprom-popup__app-hint {
+  flex-shrink: 0;
+  padding: 0.5rem 0.85rem;
+  background: #fff7fb;
+  border-bottom: 2px solid #000000;
+  font-family: var(--font-sans, 'DM Sans', system-ui, sans-serif);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #3d0f24;
+}
+
+.visprom-popup__app-error {
+  color: #9b1c3d;
+}
+
+.visprom-popup__inline-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #6b1a3d;
+  text-decoration: underline;
+  font: inherit;
+  cursor: pointer;
+}
+
 .visprom-popup__control {
   width: 18px;
   height: 18px;

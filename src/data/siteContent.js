@@ -53,7 +53,9 @@ export const projects = [
     github: 'https://github.com/MIA-PS-Vis/UPSaclay-VisProm',
     popup: 'visprom',
     popupUrl: '/visprom/index.html',
-    popupTitle: '@ VISPROM ONLINE  ·  INRAE',
+    popupPaperAsset: 'vispromFinalPaper',
+    popupPaperTitle: 'Visprom++',
+    popupTitle: '@ VISPROM  ·  INRAE',
     description: [
       'VisProm is an interactive data visualization tool developed at INRAE to help scientists explore and interpret complex, high-dimensional scientific datasets.',
       'I designed and developed the tool end-to-end, from the visualization architecture and interaction design to the implementation of exploration, filtering, and comparison features. I also led design workshops with leading wine and fermentation scientists, working directly with researchers to understand their workflows, pain points, and analytical needs, and translating those insights into tools that support real scientific decision-making.',

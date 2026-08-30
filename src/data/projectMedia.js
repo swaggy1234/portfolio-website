@@ -5,4 +5,5 @@
  */
 export const projectMedia = {
   roboticsPresentationPdf: '/robotics-presentation.pdf',
+  vispromFinalPaper: '/visprom-final-paper.pdf',
 };

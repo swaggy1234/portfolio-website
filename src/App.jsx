@@ -19,6 +19,9 @@ function resolveProjectUrl(project) {
   if (project.popupAsset && projectMedia[project.popupAsset]) {
     return projectMedia[project.popupAsset];
   }
+  if (project.popupPaperAsset && projectMedia[project.popupPaperAsset]) {
+    return projectMedia[project.popupPaperAsset];
+  }
   return project.popupUrl || project.link || '';
 }
 
@@ -32,9 +35,14 @@ export default function App() {
   }, []);
 
   const handleOpenPopup = useCallback((project) => {
-    if (project?.popup) {
-      setPopupProject(project);
+    if (!project?.popup) return;
+
+    if (project.popup === 'visprom') {
+      setPopupProject({ ...project, vispromLaunchMode: 'app' });
+      return;
     }
+
+    setPopupProject(project);
   }, []);
 
   return (
@@ -87,15 +95,23 @@ export default function App() {
         open={Boolean(popupProject)}
         onClose={() => setPopupProject(null)}
         projectUrl={resolveProjectUrl(popupProject)}
+        onlineUrl={popupProject?.popupUrl || popupProject?.link || ''}
+        paperUrl={
+          popupProject?.popupPaperAsset
+            ? projectMedia[popupProject.popupPaperAsset] || ''
+            : ''
+        }
+        paperTitle={popupProject?.popupPaperTitle || 'Visprom++'}
         title={
           popupProject?.popupTitle ||
           [popupProject?.title, popupProject?.subtitle].filter(Boolean).join('  ·  ') ||
           'Project'
         }
         iframeTitle={popupProject?.title || 'Project preview'}
-        kind={popupProject?.popup === 'pdf' ? 'pdf' : 'iframe'}
+        kind={popupProject?.popup === 'pdf' ? 'pdf' : popupProject?.popup === 'visprom' ? 'visprom' : 'iframe'}
         githubUrl={popupProject?.github || ''}
         description={popupProject?.description || ''}
+        vispromLaunchMode={popupProject?.vispromLaunchMode || 'app'}
       />
     </>
   );

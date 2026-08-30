@@ -11,6 +11,7 @@ import Experience from './components/Experience';
 import Contact from './components/Contact';
 import { projects } from './data/siteContent';
 import { projectMedia } from './data/projectMedia';
+import { vispromSync } from './data/vispromSync';
 import { LAYOUT_EDIT_MODE } from './data/layoutEdit';
 import './styles/App.css';
 
@@ -35,14 +36,9 @@ export default function App() {
   }, []);
 
   const handleOpenPopup = useCallback((project) => {
-    if (!project?.popup) return;
-
-    if (project.popup === 'visprom') {
-      setPopupProject({ ...project, vispromLaunchMode: 'app' });
-      return;
+    if (project?.popup) {
+      setPopupProject(project);
     }
-
-    setPopupProject(project);
   }, []);
 
   return (
@@ -95,13 +91,17 @@ export default function App() {
         open={Boolean(popupProject)}
         onClose={() => setPopupProject(null)}
         projectUrl={resolveProjectUrl(popupProject)}
-        onlineUrl={popupProject?.popupUrl || popupProject?.link || ''}
+        onlineUrl={
+          popupProject?.popup === 'visprom'
+            ? vispromSync.demoUrl
+            : popupProject?.popupUrl || popupProject?.link || ''
+        }
         paperUrl={
           popupProject?.popupPaperAsset
             ? projectMedia[popupProject.popupPaperAsset] || ''
             : ''
         }
-        paperTitle={popupProject?.popupPaperTitle || 'Visprom++'}
+        paperTitle={popupProject?.popupPaperTitle || 'Visprom ++ Paper'}
         title={
           popupProject?.popupTitle ||
           [popupProject?.title, popupProject?.subtitle].filter(Boolean).join('  ·  ') ||
@@ -111,7 +111,7 @@ export default function App() {
         kind={popupProject?.popup === 'pdf' ? 'pdf' : popupProject?.popup === 'visprom' ? 'visprom' : 'iframe'}
         githubUrl={popupProject?.github || ''}
         description={popupProject?.description || ''}
-        vispromLaunchMode={popupProject?.vispromLaunchMode || 'app'}
+        vispromVersion={popupProject?.popup === 'visprom' ? vispromSync.shortSha : ''}
       />
     </>
   );

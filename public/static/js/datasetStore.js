@@ -8,6 +8,12 @@ const BUILTIN_DATASETS = [
     { id: 'builtin-ynes-100', name: 'YNES-100', url: '/static/data/YNES-100.csv' },
     { id: 'builtin-fermentations-1000', name: 'Fermentations (1000 rows)', url: '/static/data/260115_5324_fermentations_1000.csv' },
     { id: 'builtin-fermentations-5324', name: 'Fermentations (~5324 rows, souche comparison)', url: '/static/data/260115_5324_fermentations.csv' },
+    { id: 'builtin-winedata-5000', name: 'Wine mock (5000 rows)', url: '/static/data/winedata_mock_5000.csv' },
+    {
+        id: 'builtin-souche-compare-demo',
+        name: 'Souche compare demo (Alpha/Beta/Gamma)',
+        url: '/static/data/souche-compare-demo.csv'
+    },
 ];
 
 const STORAGE_KEY = 'visprom_saved_datasets_v1';
@@ -321,7 +327,12 @@ function saveUploadedDataset(name, csvText) {
 function getDatasetMetaById(id) {
     const selectedId = id || getSelectedDatasetId();
     const builtin = BUILTIN_DATASETS.find(function (d) { return d.id === selectedId; });
-    if (builtin) return { id: builtin.id, name: builtin.name };
+    if (builtin) {
+        return {
+            id: builtin.id,
+            name: builtin.name
+        };
+    }
     const session = readSessionDataset();
     if (session && session.id === selectedId) {
         return { id: session.id, name: session.name };
@@ -506,7 +517,17 @@ function initDatasetSelector(mountNode) {
         .attr('id', 'datasetUpload')
         .attr('accept', '.csv,.txt,.tsv,text/csv,text/plain');
 
+    const compareUploadLabel = mainRow.append('label')
+        .attr('class', 'datasetUploadBtn datasetCompareUploadBtn')
+        .attr('title', 'Upload a second CSV to overlay in SPLOM Compare mode (needs ≥2 shared numeric columns)')
+        .text('Upload comparison CSV');
+    const compareFileInput = compareUploadLabel.append('input')
+        .attr('type', 'file')
+        .attr('id', 'comparisonDatasetUpload')
+        .attr('accept', '.csv,.txt,.tsv,.json,text/csv,text/plain,application/json');
+
     const status = root.append('div').attr('class', 'datasetStatus');
+    const compareStatus = root.append('div').attr('class', 'datasetCompareStatus');
 
     let dropdownOpen = false;
 
@@ -607,6 +628,38 @@ function initDatasetSelector(mountNode) {
     }
 
     refreshOptions();
+
+    function setCompareStatus(message, isError) {
+        compareStatus
+            .text(message || '')
+            .style('color', isError ? '#b42318' : '#0b6b2e');
+    }
+
+    // Used by tool.js to surface comparison load/match feedback.
+    if (typeof window !== 'undefined') {
+        window.__vispromSetComparisonUploadStatus = setCompareStatus;
+    }
+
+    compareFileInput.on('change', function () {
+        const file = this.files && this.files[0];
+        if (!file) return;
+        setCompareStatus('Loading comparison dataset…', false);
+        if (typeof window.applyComparisonDatasetUpload === 'function') {
+            window.applyComparisonDatasetUpload(file)
+                .then(function () {
+                    compareFileInput.property('value', '');
+                })
+                .catch(function (err) {
+                    const msg = err && err.message ? err.message : String(err || 'Comparison upload failed.');
+                    setCompareStatus(msg, true);
+                    compareFileInput.property('value', '');
+                    console.error('[Dataset] comparison upload failed:', err);
+                });
+            return;
+        }
+        setCompareStatus('Comparison upload is not available yet. Wait for the app to finish loading.', true);
+        compareFileInput.property('value', '');
+    });
 
     fileInput.on('change', function () {
         const file = this.files && this.files[0];

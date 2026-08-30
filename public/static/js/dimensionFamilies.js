@@ -243,6 +243,95 @@ function buildSplomFamilyLayout(families, expandedFamilies, allDimensions) {
     }
 }
 
+function buildSplomFamilyLayoutForFilter(families, expandedFamilies, allDimensions, allowedDimensions) {
+    const allowed = allowedDimensions && allowedDimensions.length
+        ? new Set(allowedDimensions)
+        : null
+    if (!allowed) {
+        return buildSplomFamilyLayout(families, expandedFamilies, allDimensions)
+    }
+
+    const names = sortFamilyNames(Object.keys(families || {}))
+    const groups = []
+    const allFamilies = []
+    const expandedNames = []
+
+    for (let i = 0; i < names.length; i++) {
+        const name = names[i]
+        const totalDims = (families[name] || []).filter(function (d) {
+            return allDimensions.indexOf(d) !== -1
+        })
+        if (!totalDims.length) continue
+        // Only the currently selected/applied dims appear under each family label.
+        const visibleDims = totalDims.filter(function (d) { return allowed.has(d) })
+        if (!visibleDims.length) continue
+        allFamilies.push({ name: name, dimCount: visibleDims.length })
+        groups.push({ name: name, dims: visibleDims.slice() })
+        expandedNames.push(name)
+    }
+
+    // Selected dims not yet in any family still need a band label.
+    const assigned = new Set()
+    groups.forEach(function (g) {
+        g.dims.forEach(function (d) { assigned.add(d) })
+    })
+    const leftover = allowedDimensions.filter(function (d) {
+        return allDimensions.indexOf(d) !== -1 && !assigned.has(d)
+    })
+    if (leftover.length) {
+        const label = OTHER_FAMILY
+        allFamilies.push({ name: label, dimCount: leftover.length })
+        groups.push({ name: label, dims: leftover.slice() })
+        expandedNames.push(label)
+    }
+
+    return {
+        groups: groups,
+        allFamilies: allFamilies,
+        expanded: expandedNames
+    }
+}
+
+function getPartialFamilySelectionWarnings(families, allDimensions, allowedDimensions) {
+    if (!allowedDimensions || !allowedDimensions.length) return []
+    const allowed = new Set(allowedDimensions)
+    const warnings = []
+    const names = sortFamilyNames(Object.keys(families || {}))
+    for (let i = 0; i < names.length; i++) {
+        const name = names[i]
+        if (isOthersFamily(name)) continue
+        const familyDims = (families[name] || []).filter(function (d) {
+            return allDimensions.indexOf(d) !== -1
+        })
+        if (!familyDims.length) continue
+        const selectedCount = familyDims.filter(function (d) { return allowed.has(d) }).length
+        if (selectedCount > 0 && selectedCount < familyDims.length) {
+            warnings.push({
+                family: name,
+                shown: selectedCount,
+                total: familyDims.length,
+                message: 'Family "' + name + '" is partially shown (' + selectedCount + ' of ' + familyDims.length + ' dimensions in the current SPLOM selection).'
+            })
+        }
+    }
+    return warnings
+}
+
+function getFamilyDimensionsHiddenByFilter(families, allDimensions, allowedDimensions) {
+    if (!allowedDimensions || !allowedDimensions.length) return []
+    const allowed = new Set(allowedDimensions)
+    const hidden = []
+    const names = sortFamilyNames(Object.keys(families || {}))
+    for (let i = 0; i < names.length; i++) {
+        const name = names[i]
+        const dims = (families[name] || []).filter(function (d) {
+            return allDimensions.indexOf(d) !== -1 && !allowed.has(d)
+        })
+        if (dims.length) hidden.push({ family: name, dimensions: dims })
+    }
+    return hidden
+}
+
 function parseFamilyMappingFile(file) {
     return new Promise(function (resolve, reject) {
         const name = (file && file.name ? file.name : '').toLowerCase()
@@ -341,5 +430,8 @@ module.exports = {
     removeDimensionFromAllFamilies: removeDimensionFromAllFamilies,
     sortFamilyNames: sortFamilyNames,
     getVisibleDimensionsFromFamilies: getVisibleDimensionsFromFamilies,
-    buildSplomFamilyLayout: buildSplomFamilyLayout
+    buildSplomFamilyLayout: buildSplomFamilyLayout,
+    buildSplomFamilyLayoutForFilter: buildSplomFamilyLayoutForFilter,
+    getPartialFamilySelectionWarnings: getPartialFamilySelectionWarnings,
+    getFamilyDimensionsHiddenByFilter: getFamilyDimensionsHiddenByFilter
 }

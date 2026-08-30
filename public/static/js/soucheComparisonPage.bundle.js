@@ -28829,6 +28829,7 @@ exports.compileProgram = compileProgram;
  */
 
 const d3 = require("d3")
+const columnMetadata = require("./columnMetadata")
 
 const DEFAULT_BASE_ALPHA = 0.12
 const DEFAULT_HIGHLIGHT_ALPHA = 0.92
@@ -28866,6 +28867,11 @@ function topPointColor(row) {
         const fromProvider = displayColorProvider(row.row || row)
         if (fromProvider && fromProvider.array) return fromProvider.array.slice()
     } catch (e) { /* ignore */ }
+    try {
+        const raw = row.row || row
+        const catFill = columnMetadata.getCategoryFillForRow(raw)
+        if (catFill) return columnMetadata.hexToRgbaArray(catFill, DEFAULT_HIGHLIGHT_ALPHA)
+    } catch (e) { /* ignore */ }
     const colorSet = row.color ? row.color : (row.row && row.row.color)
     const top = colorSet ? Array.from(colorSet).pop() : null
     if (!top || !top.array) return null
@@ -28882,18 +28888,35 @@ function rgbaToStardust(rgba) {
 function getChartRenderRows(data, xDim, yDim) {
     const rows = []
     if (!data || !xDim || !yDim) return rows
+    const xCat = columnMetadata.isCategoricalDimension(xDim)
+    const yCat = columnMetadata.isCategoricalDimension(yDim)
     for (let i = 0; i < data.length; i++) {
         const row = data[i]
         if (!row || row.visibility === false) continue
-        const x = Number(row[xDim])
-        const y = Number(row[yDim])
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+        let x
+        let y
+        if (xCat) {
+            x = columnMetadata.getCategoryLabel(xDim, row[xDim])
+            if (x === "" || x == null) continue
+        } else {
+            x = Number(row[xDim])
+            if (!Number.isFinite(x)) continue
+        }
+        if (yCat) {
+            y = columnMetadata.getCategoryLabel(yDim, row[yDim])
+            if (y === "" || y == null) continue
+        } else {
+            y = Number(row[yDim])
+            if (!Number.isFinite(y)) continue
+        }
         const rowId = row.__rowId != null ? row.__rowId : (row.id != null ? row.id : i)
         rows.push({
             row: row,
             rowId: rowId,
             x: x,
             y: y,
+            xCategorical: xCat,
+            yCategorical: yCat,
             selected: false,
             highlighted: false
         })
@@ -28919,11 +28942,56 @@ function buildPairScales(domainMap, xDim, yDim, cellW, cellH, pad) {
     const cw = Math.max(1, Math.round(cellW))
     const ch = Math.max(1, Math.round(cellH))
     const padding = pad != null ? pad : Math.max(2, Math.floor(Math.min(cw, ch) * 0.08))
-    const xDomain = (domainMap && domainMap[xDim]) || [0, 1]
-    const yDomain = (domainMap && domainMap[yDim]) || [0, 1]
-    const xScale = d3.scaleLinear().domain(xDomain).range([padding, cw - padding])
-    const yScale = d3.scaleLinear().domain(yDomain).range([ch - padding, padding])
-    return { xScale: xScale, yScale: yScale, cw: cw, ch: ch, pad: padding }
+    const xCat = columnMetadata.isCategoricalDimension(xDim)
+    const yCat = columnMetadata.isCategoricalDimension(yDim)
+
+    let xScale
+    let yScale
+    if (xCat) {
+        const xDomain = (domainMap && domainMap[xDim] && domainMap[xDim].categories)
+            ? domainMap[xDim].categories
+            : columnMetadata.getCategoryDomain(xDim)
+        xScale = d3.scalePoint().domain(xDomain.length ? xDomain : ["?"]).range([padding, cw - padding]).padding(0.5)
+    } else {
+        const xDomain = (domainMap && domainMap[xDim] && Array.isArray(domainMap[xDim]))
+            ? domainMap[xDim]
+            : ((domainMap && domainMap[xDim] && domainMap[xDim].extent) || [0, 1])
+        xScale = d3.scaleLinear().domain(xDomain).range([padding, cw - padding])
+    }
+    if (yCat) {
+        const yDomain = (domainMap && domainMap[yDim] && domainMap[yDim].categories)
+            ? domainMap[yDim].categories
+            : columnMetadata.getCategoryDomain(yDim)
+        yScale = d3.scalePoint().domain(yDomain.length ? yDomain : ["?"]).range([ch - padding, padding]).padding(0.5)
+    } else {
+        const yDomain = (domainMap && domainMap[yDim] && Array.isArray(domainMap[yDim]))
+            ? domainMap[yDim]
+            : ((domainMap && domainMap[yDim] && domainMap[yDim].extent) || [0, 1])
+        yScale = d3.scaleLinear().domain(yDomain).range([ch - padding, padding])
+    }
+    return {
+        xScale: xScale,
+        yScale: yScale,
+        cw: cw,
+        ch: ch,
+        pad: padding,
+        xCategorical: xCat,
+        yCategorical: yCat,
+        xDim: xDim,
+        yDim: yDim
+    }
+}
+
+function countColoredMemberships(entry) {
+    if (!entry) return 0
+    const row = entry.row || entry
+    const colorSet = row && row.color
+    if (!colorSet || typeof colorSet.size !== "number") return entry.selected ? 1 : 0
+    let n = 0
+    colorSet.forEach(function (c) {
+        if (c && c.cname && c.cname !== "Blue") n += 1
+    })
+    return n
 }
 
 function getPointStyle(entry, options) {
@@ -28932,74 +29000,155 @@ function getPointStyle(entry, options) {
     const baseAlpha = opts.baseAlpha != null ? opts.baseAlpha : DEFAULT_BASE_ALPHA
     const highlightAlpha = opts.highlightAlpha != null ? opts.highlightAlpha : DEFAULT_HIGHLIGHT_ALPHA
     const selected = !!(opts.forceHighlight || (entry && (entry.selected || entry.highlighted)))
+    const overlapCount = countColoredMemberships(entry)
+    const isOverlap = overlapCount > 1
+    const hasActiveSelection = !!opts.hasActiveSelection
 
     if (!selected) {
-        const baseRgba = opts.baseColorRgba || [0, 0, 1, baseAlpha]
+        let baseRgba = opts.baseColorRgba || [0, 0, 1, baseAlpha]
+        try {
+            const raw = entry && (entry.row || entry)
+            const catFill = columnMetadata.getCategoryFillForRow(raw)
+            if (catFill) {
+                baseRgba = columnMetadata.hexToRgbaArray(
+                    catFill,
+                    hasActiveSelection ? Math.min(baseAlpha, 0.18) : 0.55
+                )
+            }
+        } catch (e) { /* ignore */ }
         return {
             rgba: baseRgba.slice(),
-            radius: opts.baseRadius != null ? opts.baseRadius : DEFAULT_BASE_RADIUS
+            radius: opts.baseRadius != null ? opts.baseRadius : DEFAULT_BASE_RADIUS,
+            overlap: false
         }
     }
 
     const radius = opts.highlightRadius != null
         ? opts.highlightRadius
         : (opts.baseRadius != null ? opts.baseRadius : DEFAULT_HIGHLIGHT_RADIUS)
+    const overlapRadius = isOverlap ? Math.max(radius + 0.8, 2.6) : radius
     if (opts.previewHighlightRgba) {
         return {
             rgba: opts.previewHighlightRgba.slice(),
-            radius: radius
+            radius: overlapRadius,
+            overlap: isOverlap
         }
     }
     if (opts.highlightColorRgba) {
         return {
             rgba: opts.highlightColorRgba.slice(),
-            radius: radius
+            radius: overlapRadius,
+            overlap: isOverlap
         }
     }
     const top = topPointColor(entry.row)
     if (!top) {
         return {
             rgba: [0, 1, 0, highlightAlpha],
-            radius: radius
+            radius: overlapRadius,
+            overlap: isOverlap
         }
     }
     const rgba = rgbaToStardust(top)
     rgba[3] = densityMode ? highlightAlpha : (top[3] != null ? top[3] : highlightAlpha)
     return {
         rgba: rgba,
-        radius: radius
+        radius: overlapRadius,
+        overlap: isOverlap
     }
+}
+
+function rgbaToCanvasStyle(rgba) {
+    const r = Math.round(Math.max(0, Math.min(1, rgba[0] || 0)) * 255)
+    const g = Math.round(Math.max(0, Math.min(1, rgba[1] || 0)) * 255)
+    const b = Math.round(Math.max(0, Math.min(1, rgba[2] || 0)) * 255)
+    const a = rgba[3] != null ? rgba[3] : 1
+    return "rgba(" + r + "," + g + "," + b + "," + a + ")"
+}
+
+function projectPoint(d, xScale, yScale, options) {
+    const opts = options || {}
+    const xCat = opts.xCategorical != null ? opts.xCategorical : !!(d && d.xCategorical)
+    const yCat = opts.yCategorical != null ? opts.yCategorical : !!(d && d.yCategorical)
+    const xDim = opts.xDim
+    const yDim = opts.yDim
+    let px = xScale(d.x)
+    let py = yScale(d.y)
+    const jitterAmt = opts.jitterAmount != null
+        ? opts.jitterAmount
+        : Math.max(3, Math.min(8, Math.floor(Math.min(
+            (opts.width || 40),
+            (opts.height || 40)
+        ) * 0.12)))
+    if (xCat && Number.isFinite(px)) {
+        px += columnMetadata.jitterValue(d.rowId, xDim || "x", jitterAmt)
+    }
+    if (yCat && Number.isFinite(py)) {
+        py += columnMetadata.jitterValue(d.rowId, yDim || "y", jitterAmt)
+    }
+    return { px: px, py: py }
 }
 
 function drawMiniScatterplot(Stardust, tempCanvas, targetCanvas, rows, xScale, yScale, options) {
     const opts = options || {}
-    const cw = opts.width || tempCanvas.width
-    const ch = opts.height || tempCanvas.height
+    const cw = opts.width || targetCanvas.width || (tempCanvas && tempCanvas.width)
+    const ch = opts.height || targetCanvas.height || (tempCanvas && tempCanvas.height)
     const ctx = targetCanvas.getContext("2d")
-    if (!ctx) return
+    if (!ctx || !cw || !ch) return
 
     ctx.clearRect(0, 0, cw, ch)
     if (!rows || !rows.length) return
 
-    // Draw unselected first, selected last so highlights sit on top in one pass.
-    const sorted = rows.slice().sort(function (a, b) {
-        const as = (a.selected || a.highlighted) ? 1 : 0
-        const bs = (b.selected || b.highlighted) ? 1 : 0
-        return as - bs
+    const drawOpts = Object.assign({}, opts, {
+        width: cw,
+        height: ch
     })
 
-    const platform = Stardust.platform("webgl-2d", tempCanvas, cw, ch)
-    const circles = Stardust.mark.create(Stardust.mark.circle(1), platform)
-    circles.attr("center", function (d) { return [xScale(d.x), yScale(d.y)] })
-    circles.attr("radius", function (d) {
-        return getPointStyle(d, opts).radius
-    })
-    circles.attr("color", function (d) {
-        return getPointStyle(d, opts).rgba
-    })
-    circles.data(sorted)
-    circles.render()
-    ctx.drawImage(tempCanvas, 0, 0, cw, ch)
+    let needsSort = false
+    for (let i = 0; i < rows.length; i++) {
+        if (rows[i] && (rows[i].selected || rows[i].highlighted)) {
+            needsSort = true
+            break
+        }
+    }
+    const drawList = needsSort
+        ? rows.slice().sort(function (a, b) {
+            const as = (a.selected || a.highlighted) ? 1 : 0
+            const bs = (b.selected || b.highlighted) ? 1 : 0
+            return as - bs
+        })
+        : rows
+
+    for (let i = 0; i < drawList.length; i++) {
+        const d = drawList[i]
+        const pos = projectPoint(d, xScale, yScale, drawOpts)
+        const px = pos.px
+        const py = pos.py
+        if (!Number.isFinite(px) || !Number.isFinite(py)) continue
+        const style = getPointStyle(d, opts)
+        if (opts.pointShape === "x") {
+            const half = Math.max(2, style.radius + 0.4)
+            ctx.strokeStyle = rgbaToCanvasStyle(style.rgba)
+            ctx.lineWidth = d && (d.selected || d.highlighted) ? 1.8 : 1.1
+            ctx.beginPath()
+            ctx.moveTo(px - half, py - half)
+            ctx.lineTo(px + half, py + half)
+            ctx.moveTo(px - half, py + half)
+            ctx.lineTo(px + half, py - half)
+            ctx.stroke()
+        } else {
+            ctx.beginPath()
+            ctx.arc(px, py, style.radius, 0, Math.PI * 2)
+            ctx.fillStyle = rgbaToCanvasStyle(style.rgba)
+            ctx.fill()
+            const colorBy = columnMetadata.getActiveColorBy()
+            if (style.overlap || (d && d.selected && colorBy && colorBy !== "selection")) {
+                ctx.strokeStyle = "#111827"
+                ctx.lineWidth = style.overlap ? 1.5 : 1.2
+                ctx.stroke()
+            }
+        }
+    }
 }
 
 module.exports = {
@@ -29013,10 +29162,564 @@ module.exports = {
     applySelectionToRows: applySelectionToRows,
     buildPairScales: buildPairScales,
     getPointStyle: getPointStyle,
+    projectPoint: projectPoint,
     drawMiniScatterplot: drawMiniScatterplot
 }
 
-},{"d3":32}],82:[function(require,module,exports){
+},{"./columnMetadata":82,"d3":32}],82:[function(require,module,exports){
+/**
+ * Central column metadata: categorical vs numeric typing, labels, scales, jitter.
+ *
+ * Typing rule (modular):
+ * - numeric  → values mostly parse as numbers → continuous SPLOM/main axes
+ * - categorical → non-numeric values with ≥2 distinct categories (or explicit hint/override)
+ * - known yeast/souche names are hinted categorical so coded 1/2/3 still group correctly
+ *
+ * Complexity (n = rows, c = columns, k = categories << n):
+ * - buildColumnMetadata: O(n * c) once per dataset load
+ * - type/label/color lookups: O(1)
+ * - draw: O(n) per cell
+ */
+const d3 = require('d3')
+
+const DEFAULT_THRESHOLDS = {
+  numericRatioMin: 0.9,
+  maxUniqueForCategorical: 12,
+  uniqueRatioMax: 0.2,
+  encodedMaxUnique: 12,
+  encodedUniqueRatioMax: 0.15
+}
+
+const DEFAULT_CATEGORY_PALETTE = [
+  '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+  '#393b79', '#637939', '#8c6d31', '#843c39', '#7b4173'
+]
+
+let thresholds = Object.assign({}, DEFAULT_THRESHOLDS)
+let columnMetadataStore = {}
+let categoryMappingsStore = {}
+let categoryColorState = {}
+let activeColorBy = null
+let userForcedCategorical = {}
+let userForcedNumeric = {}
+const hexRgbaCache = Object.create(null)
+
+function setThresholds(next) {
+  thresholds = Object.assign({}, DEFAULT_THRESHOLDS, next || {})
+}
+
+function getThresholds() {
+  return Object.assign({}, thresholds)
+}
+
+function setCategoryMappings(mappings) {
+  categoryMappingsStore = mappings && typeof mappings === 'object' ? mappings : {}
+}
+
+function getCategoryMappings() {
+  return categoryMappingsStore
+}
+
+function setUserColumnTypeOverride(columnName, type) {
+  if (!columnName) return
+  if (type === 'categorical') {
+    userForcedCategorical[columnName] = true
+    delete userForcedNumeric[columnName]
+  } else if (type === 'numeric') {
+    userForcedNumeric[columnName] = true
+    delete userForcedCategorical[columnName]
+  } else {
+    delete userForcedCategorical[columnName]
+    delete userForcedNumeric[columnName]
+  }
+}
+
+function clearUserColumnTypeOverrides() {
+  userForcedCategorical = {}
+  userForcedNumeric = {}
+}
+
+/** O(n) collect — prefer analyzeColumnInOnePass for load. */
+function collectColumnValues(data, columnName) {
+  const values = []
+  if (!data || !columnName) return values
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i]
+    if (!row) continue
+    const v = row[columnName]
+    if (v === null || v === undefined || v === '') continue
+    values.push(v)
+  }
+  return values
+}
+
+/**
+ * Single O(n) pass: unique keys, numeric ratio, min/max.
+ * Avoids separate collect + unique + extent scans.
+ */
+function analyzeColumnInOnePass(data, columnName) {
+  let nonEmpty = 0
+  let numericCount = 0
+  let min = Infinity
+  let max = -Infinity
+  const seen = new Set()
+  const uniqueRaw = []
+
+  if (!data || !columnName) {
+    return {
+      nonEmpty: 0,
+      numericCount: 0,
+      uniqueRaw: uniqueRaw,
+      min: 0,
+      max: 1
+    }
+  }
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i]
+    if (!row) continue
+    const v = row[columnName]
+    if (v === null || v === undefined || v === '') continue
+    nonEmpty += 1
+    const key = String(v)
+    if (!seen.has(key)) {
+      seen.add(key)
+      uniqueRaw.push(key)
+    }
+    const num = Number(v)
+    if (Number.isFinite(num)) {
+      numericCount += 1
+      if (num < min) min = num
+      if (num > max) max = num
+    }
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    min = 0
+    max = 1
+  }
+
+  return {
+    nonEmpty: nonEmpty,
+    numericCount: numericCount,
+    uniqueRaw: uniqueRaw,
+    min: min,
+    max: max
+  }
+}
+
+function inferColumnTypeFromStats(stats, columnName, metaHints) {
+  const meta = metaHints || {}
+  if (userForcedCategorical[columnName]) return 'categorical'
+  if (userForcedNumeric[columnName]) return 'numeric'
+
+  const catSet = meta.categoricalSet
+  const numSet = meta.numericSet
+  if (catSet && catSet.has(columnName)) return 'categorical'
+  if (numSet && numSet.has(columnName)) return 'numeric'
+  if (!catSet && meta.categoricalColumns && meta.categoricalColumns.indexOf(columnName) !== -1) {
+    return 'categorical'
+  }
+  if (!numSet && meta.numericColumns && meta.numericColumns.indexOf(columnName) !== -1) {
+    return 'numeric'
+  }
+
+  const nonEmpty = stats.nonEmpty || 0
+  if (!nonEmpty) return 'numeric'
+
+  const uniqueCount = (stats.uniqueRaw && stats.uniqueRaw.length) || 0
+  const numericRatio = (stats.numericCount || 0) / Math.max(nonEmpty, 1)
+
+  // Mostly-parseable numbers stay numeric — even with few unique levels
+  // (DoE factors like temperature / N_ini). Low-cardinality alone must NOT
+  // force categorical; that collapsed continuous SPLOM axes into point bands.
+  // True categoricals are either non-numeric (species) or name-hinted (Souche).
+  if (numericRatio >= thresholds.numericRatioMin) return 'numeric'
+
+  if (uniqueCount >= 2) return 'categorical'
+  return 'numeric'
+}
+
+/** Back-compat wrapper used by tests / external callers. */
+function inferColumnType(values, columnName, metadata) {
+  const list = values || []
+  let numericCount = 0
+  let min = Infinity
+  let max = -Infinity
+  const seen = new Set()
+  const uniqueRaw = []
+  for (let i = 0; i < list.length; i++) {
+    const v = list[i]
+    if (v === null || v === undefined || v === '') continue
+    const key = String(v)
+    if (!seen.has(key)) {
+      seen.add(key)
+      uniqueRaw.push(key)
+    }
+    const num = Number(v)
+    if (Number.isFinite(num)) {
+      numericCount += 1
+      if (num < min) min = num
+      if (num > max) max = num
+    }
+  }
+  return inferColumnTypeFromStats({
+    nonEmpty: list.length,
+    numericCount: numericCount,
+    uniqueRaw: uniqueRaw,
+    min: min,
+    max: max
+  }, columnName, metadata)
+}
+
+function sortCategoryKeys(keys) {
+  return keys.slice().sort(function (a, b) {
+    const na = Number(a)
+    const nb = Number(b)
+    const aNum = Number.isFinite(na) && String(na) === String(a).trim()
+    const bNum = Number.isFinite(nb) && String(nb) === String(b).trim()
+    if (aNum && bNum) return na - nb
+    if (aNum) return -1
+    if (bNum) return 1
+    return String(a).localeCompare(String(b))
+  })
+}
+
+function buildValueToLabel(columnName, uniqueRawKeys) {
+  const mapping = categoryMappingsStore[columnName] || {}
+  const valueToLabel = Object.create(null)
+  const categories = []
+  const labelSeen = new Set()
+  const sorted = sortCategoryKeys(uniqueRawKeys)
+  for (let i = 0; i < sorted.length; i++) {
+    const rawKey = sorted[i]
+    const label = mapping[rawKey] != null
+      ? String(mapping[rawKey])
+      : (mapping[Number(rawKey)] != null ? String(mapping[Number(rawKey)]) : String(rawKey))
+    valueToLabel[rawKey] = label
+    if (!labelSeen.has(label)) {
+      labelSeen.add(label)
+      categories.push(label)
+    }
+  }
+  return { valueToLabel: valueToLabel, categories: categories, rawCategories: sorted }
+}
+
+function extentFromMinMax(min, max, padding) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1]
+  if (min === max) {
+    const flat = min === 0 ? 1 : Math.abs(min) * 0.1
+    return [min - flat, max + flat]
+  }
+  const pad = padding != null ? padding : 0.08
+  const span = max - min
+  return [min - span * pad, max + span * pad]
+}
+
+function toHintSets(opts) {
+  const categoricalColumns = opts.categoricalColumns || []
+  const numericColumns = opts.numericColumns || []
+  return {
+    categoricalColumns: categoricalColumns,
+    numericColumns: numericColumns,
+    categoricalSet: new Set(categoricalColumns),
+    numericSet: new Set(numericColumns)
+  }
+}
+
+/**
+ * O(n * c) once per load. One pass per column.
+ */
+function buildColumnMetadata(data, options) {
+  const opts = options || {}
+  const columns = opts.columns || (data && data.length ? Object.keys(data[0]) : [])
+  const skipSet = new Set(opts.skipColumns || [])
+  const hints = toHintSets(opts)
+  const store = Object.create(null)
+
+  for (let ci = 0; ci < columns.length; ci++) {
+    const col = columns[ci]
+    if (!col || skipSet.has(col)) continue
+
+    const stats = analyzeColumnInOnePass(data, col)
+    const type = inferColumnTypeFromStats(stats, col, hints)
+
+    if (type === 'categorical') {
+      const mapped = buildValueToLabel(col, stats.uniqueRaw)
+      store[col] = {
+        type: 'categorical',
+        categories: mapped.categories,
+        rawCategories: mapped.rawCategories,
+        valueToLabel: mapped.valueToLabel
+      }
+    } else {
+      store[col] = {
+        type: 'numeric',
+        extent: extentFromMinMax(stats.min, stats.max, opts.padding)
+      }
+    }
+  }
+
+  columnMetadataStore = store
+  return store
+}
+
+function setColumnMetadata(store) {
+  columnMetadataStore = store || Object.create(null)
+}
+
+function getColumnMetadata(dim) {
+  if (!dim) return null
+  return columnMetadataStore[dim] || null
+}
+
+function getAllColumnMetadata() {
+  return columnMetadataStore
+}
+
+function isCategoricalDimension(dim) {
+  const meta = columnMetadataStore[dim]
+  return !!(meta && meta.type === 'categorical')
+}
+
+function isNumericDimensionMeta(dim) {
+  const meta = columnMetadataStore[dim]
+  if (meta) return meta.type === 'numeric'
+  return true
+}
+
+function getColumnType(dim) {
+  const meta = columnMetadataStore[dim]
+  return meta && meta.type ? meta.type : 'numeric'
+}
+
+/** O(1) map lookup. */
+function getCategoryLabel(dim, value) {
+  if (value === null || value === undefined || value === '') return ''
+  const key = String(value)
+  const meta = columnMetadataStore[dim]
+  if (meta && meta.valueToLabel && meta.valueToLabel[key] != null) {
+    return meta.valueToLabel[key]
+  }
+  const mapping = categoryMappingsStore[dim]
+  if (mapping) {
+    if (mapping[key] != null) return String(mapping[key])
+    if (mapping[Number(key)] != null) return String(mapping[Number(key)])
+  }
+  return key
+}
+
+/** Returns cached domain array (do not mutate). O(1). */
+function getCategoryDomain(dim) {
+  const meta = columnMetadataStore[dim]
+  if (meta && meta.categories) return meta.categories
+  return EMPTY_ARRAY
+}
+
+function getRawCategoryDomain(dim) {
+  const meta = columnMetadataStore[dim]
+  if (meta && meta.rawCategories) return meta.rawCategories
+  return getCategoryDomain(dim)
+}
+
+const EMPTY_ARRAY = Object.freeze([])
+
+function getNumericExtent(dim) {
+  const meta = columnMetadataStore[dim]
+  if (meta && meta.extent) return meta.extent
+  return DEFAULT_EXTENT
+}
+
+const DEFAULT_EXTENT = Object.freeze([0, 1])
+
+function getDimensionScale(dim, range, options) {
+  const opts = options || {}
+  const r = range || [0, 1]
+  if (isCategoricalDimension(dim)) {
+    return d3.scalePoint()
+      .domain(getCategoryDomain(dim))
+      .range(r)
+      .padding(opts.pointPadding != null ? opts.pointPadding : 0.5)
+  }
+  const extent = opts.domain || getNumericExtent(dim)
+  return d3.scaleLinear()
+    .domain(extent)
+    .range(r)
+}
+
+function simpleHash(str) {
+  let h = 2166136261
+  const s = String(str || '')
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+/** O(1) for numeric ids; O(|axisName|) otherwise. Deterministic. */
+function jitterValue(pointId, axisName, amount) {
+  const amt = amount != null ? amount : 6
+  let hash
+  if (typeof pointId === 'number' && Number.isFinite(pointId)) {
+    // Mix numeric id with a short axis salt — no string alloc of the id.
+    hash = (Math.imul(pointId | 0, 2654435761) ^ simpleHash(axisName)) >>> 0
+  } else {
+    hash = simpleHash(String(pointId) + '-' + String(axisName))
+  }
+  return ((hash % 1000) / 1000 - 0.5) * amt
+}
+
+function getAxisPlotValue(dim, row) {
+  if (!row || !dim) return null
+  if (isCategoricalDimension(dim)) return getCategoryLabel(dim, row[dim])
+  const n = Number(row[dim])
+  return Number.isFinite(n) ? n : null
+}
+
+function defaultCategoryColor(label, index) {
+  const idx = index != null ? index : (simpleHash(label) % DEFAULT_CATEGORY_PALETTE.length)
+  return DEFAULT_CATEGORY_PALETTE[idx % DEFAULT_CATEGORY_PALETTE.length]
+}
+
+/** O(k) once when switching color-by — not per point. */
+function ensureCategoryColors(dim) {
+  if (!dim || !isCategoricalDimension(dim)) return EMPTY_OBJECT
+  if (!categoryColorState[dim]) categoryColorState[dim] = Object.create(null)
+  const colors = categoryColorState[dim]
+  const domain = getCategoryDomain(dim)
+  for (let i = 0; i < domain.length; i++) {
+    const label = domain[i]
+    if (!colors[label]) colors[label] = defaultCategoryColor(label, i)
+  }
+  return colors
+}
+
+const EMPTY_OBJECT = Object.freeze({})
+
+/** O(1) after ensureCategoryColors was called for this dim. */
+function getCategoryColor(dim, valueOrLabel) {
+  if (!dim) return null
+  const label = getCategoryLabel(dim, valueOrLabel)
+  const colors = categoryColorState[dim]
+  if (colors && colors[label]) return colors[label]
+  return defaultCategoryColor(label)
+}
+
+function setCategoryColor(dim, label, color) {
+  if (!dim || !label) return
+  if (!categoryColorState[dim]) categoryColorState[dim] = Object.create(null)
+  categoryColorState[dim][String(label)] = color
+}
+
+function getCategoryColorState() {
+  return categoryColorState
+}
+
+function setCategoryColorState(state) {
+  categoryColorState = state && typeof state === 'object' ? state : {}
+}
+
+function getActiveColorBy() {
+  return activeColorBy
+}
+
+function setActiveColorBy(dim) {
+  if (!dim || dim === 'none' || dim === 'None') {
+    activeColorBy = null
+    return activeColorBy
+  }
+  if (dim === 'selection' || dim === 'Selection') {
+    activeColorBy = 'selection'
+    return activeColorBy
+  }
+  activeColorBy = dim
+  if (isCategoricalDimension(dim)) ensureCategoryColors(dim)
+  return activeColorBy
+}
+
+/** O(1) fill lookup for draw loops. */
+function getCategoryFillForRow(row) {
+  if (!activeColorBy || activeColorBy === 'selection' || !row) return null
+  const meta = columnMetadataStore[activeColorBy]
+  if (!meta || meta.type !== 'categorical') return null
+  return getCategoryColor(activeColorBy, row[activeColorBy])
+}
+
+function hexToRgbaArray(hex, alpha) {
+  const a = alpha != null ? alpha : 1
+  const key = String(hex || '') + '|' + a
+  if (hexRgbaCache[key]) return hexRgbaCache[key].slice()
+  const h = String(hex || '').replace('#', '')
+  let rgba
+  if (h.length !== 3 && h.length !== 6) {
+    rgba = [0.2, 0.4, 0.8, a]
+  } else {
+    const full = h.length === 3
+      ? h.split('').map(function (c) { return c + c }).join('')
+      : h
+    rgba = [
+      parseInt(full.slice(0, 2), 16) / 255,
+      parseInt(full.slice(2, 4), 16) / 255,
+      parseInt(full.slice(4, 6), 16) / 255,
+      a
+    ]
+  }
+  hexRgbaCache[key] = rgba
+  return rgba.slice()
+}
+
+function shouldSkipNumericMethod(dim) {
+  return isCategoricalDimension(dim)
+}
+
+function formatDimensionBadge(dim) {
+  return isCategoricalDimension(dim) ? 'categorical' : 'numeric'
+}
+
+module.exports = {
+  DEFAULT_THRESHOLDS: DEFAULT_THRESHOLDS,
+  DEFAULT_CATEGORY_PALETTE: DEFAULT_CATEGORY_PALETTE,
+  setThresholds: setThresholds,
+  getThresholds: getThresholds,
+  setCategoryMappings: setCategoryMappings,
+  getCategoryMappings: getCategoryMappings,
+  setUserColumnTypeOverride: setUserColumnTypeOverride,
+  clearUserColumnTypeOverrides: clearUserColumnTypeOverrides,
+  inferColumnType: inferColumnType,
+  analyzeColumnInOnePass: analyzeColumnInOnePass,
+  buildColumnMetadata: buildColumnMetadata,
+  setColumnMetadata: setColumnMetadata,
+  getColumnMetadata: getColumnMetadata,
+  getAllColumnMetadata: getAllColumnMetadata,
+  isCategoricalDimension: isCategoricalDimension,
+  isNumericDimensionMeta: isNumericDimensionMeta,
+  getColumnType: getColumnType,
+  getCategoryLabel: getCategoryLabel,
+  getCategoryDomain: getCategoryDomain,
+  getRawCategoryDomain: getRawCategoryDomain,
+  getNumericExtent: getNumericExtent,
+  getDimensionScale: getDimensionScale,
+  simpleHash: simpleHash,
+  jitterValue: jitterValue,
+  getAxisPlotValue: getAxisPlotValue,
+  defaultCategoryColor: defaultCategoryColor,
+  ensureCategoryColors: ensureCategoryColors,
+  getCategoryColor: getCategoryColor,
+  setCategoryColor: setCategoryColor,
+  getCategoryColorState: getCategoryColorState,
+  setCategoryColorState: setCategoryColorState,
+  getActiveColorBy: getActiveColorBy,
+  setActiveColorBy: setActiveColorBy,
+  getCategoryFillForRow: getCategoryFillForRow,
+  hexToRgbaArray: hexToRgbaArray,
+  shouldSkipNumericMethod: shouldSkipNumericMethod,
+  formatDimensionBadge: formatDimensionBadge,
+  collectColumnValues: collectColumnValues
+}
+
+},{"d3":32}],83:[function(require,module,exports){
 /**
  * Multi-dataset / Pareto-front comparison helpers.
  */
@@ -29166,10 +29869,12 @@ module.exports = {
     formatComparisonSummary: formatComparisonSummary
 }
 
-},{"./datasetColumns.js":83,"./datasetStore.js":84,"./splom.js":88,"d3":32}],83:[function(require,module,exports){
+},{"./datasetColumns.js":84,"./datasetStore.js":85,"./splom.js":90,"d3":32}],84:[function(require,module,exports){
 /**
- * Classify dataset columns into numeric visualization dimensions vs metadata.
+ * Classify dataset columns into numeric visualization dimensions vs metadata / categorical.
  */
+
+const columnMetadata = require('./columnMetadata')
 
 const METADATA_COLUMN_NAMES = new Set([
     "Souche",
@@ -29221,17 +29926,14 @@ const YEAST_COLUMN_CANDIDATES = [
 ]
 
 function isNumericDimension(data, columnName) {
-    if (!data || !data.length || !columnName) return false
-    const values = data
-        .map(function (row) { return row[columnName] })
-        .filter(function (v) { return v !== null && v !== undefined && v !== "" })
-
-    if (values.length === 0) return false
-
-    const numericCount = values.filter(function (v) { return Number.isFinite(+v) }).length
-    const numericRatio = numericCount / values.length
-
-    return numericRatio >= 0.9
+    if (!columnName || isInternalProgrammaticColumn(columnName)) return false
+    if (columnMetadata.getColumnMetadata(columnName)) {
+        return columnMetadata.isNumericDimensionMeta(columnName)
+    }
+    if (!data || !data.length) return false
+    const values = columnMetadata.collectColumnValues(data, columnName)
+    if (!values.length) return false
+    return columnMetadata.inferColumnType(values, columnName, {}) === "numeric"
 }
 
 function detectYeastColumn(columns) {
@@ -29243,39 +29945,128 @@ function detectYeastColumn(columns) {
     return null
 }
 
-function classifyDatasetColumns(data) {
+/** A column usable to split rows into groups: categorical with at least 2 values. */
+function isCategoricalGroupingColumn(data, columnName) {
+    if (!columnName || isInternalProgrammaticColumn(columnName)) return false
+    if (columnMetadata.getColumnMetadata(columnName)) {
+        if (!columnMetadata.isCategoricalDimension(columnName)) return false
+        const cats = columnMetadata.getRawCategoryDomain(columnName)
+        if (cats.length < 2) return false
+        if (data && data.length && cats.length >= data.length) return false
+        return true
+    }
+    const values = columnMetadata.collectColumnValues(data, columnName)
+    if (values.length < 2) return false
+    const type = columnMetadata.inferColumnType(values, columnName, {
+        categoricalColumns: METADATA_COLUMN_NAMES.has(columnName) ? [columnName] : []
+    })
+    if (type !== "categorical") return false
+    const uniqueValues = []
+    const seen = new Set()
+    for (let i = 0; i < values.length; i++) {
+        const key = String(values[i])
+        if (!seen.has(key)) {
+            seen.add(key)
+            uniqueValues.push(key)
+        }
+    }
+    if (uniqueValues.length < 2) return false
+    if (data && data.length && uniqueValues.length >= data.length) return false
+    return true
+}
+
+function detectCategoricalColumns(data, columns) {
+    const cols = columns || (data && data.length ? Object.keys(data[0]) : [])
+    return cols.filter(function (col) {
+        return isCategoricalGroupingColumn(data, col)
+    })
+}
+
+function classifyDatasetColumns(data, options) {
+    const opts = options || {}
     if (!data || !data.length) {
         return {
             allColumns: [],
             numericDimensions: [],
             metadataColumns: [],
-            yeastColumn: null
+            categoricalColumns: [],
+            splomDimensions: [],
+            yeastColumn: null,
+            columnMetadata: {}
         }
     }
 
     const allColumns = Object.keys(data[0])
-    const numericDimensions = allColumns.filter(function (col) {
-        return !METADATA_COLUMN_NAMES.has(col)
-            && !isInternalProgrammaticColumn(col)
-            && isNumericDimension(data, col)
-    })
-    const metadataColumns = allColumns.filter(function (col) {
-        return METADATA_COLUMN_NAMES.has(col)
-            || isInternalProgrammaticColumn(col)
-            || !isNumericDimension(data, col)
-    })
     const yeastColumn = detectYeastColumn(allColumns)
+
+    // Known yeast/souche names are always categorical hints.
+    const forcedCategorical = allColumns.filter(function (col) {
+        return METADATA_COLUMN_NAMES.has(col)
+    })
+
+    const skip = allColumns.filter(isInternalProgrammaticColumn)
+    const meta = columnMetadata.buildColumnMetadata(data, {
+        columns: allColumns,
+        skipColumns: skip,
+        categoricalColumns: forcedCategorical.concat(opts.categoricalColumns || []),
+        numericColumns: opts.numericColumns || [],
+        padding: opts.padding
+    })
+
+    const numericDimensions = []
+    const categoricalColumns = []
+    const metadataColumns = []
+    const splomDimensions = []
+
+    allColumns.forEach(function (col) {
+        if (isInternalProgrammaticColumn(col)) {
+            metadataColumns.push(col)
+            return
+        }
+        const entry = meta[col]
+        const type = entry && entry.type ? entry.type : "numeric"
+        if (type === "categorical") {
+            categoricalColumns.push(col)
+            metadataColumns.push(col)
+            // Categorical columns are eligible SPLOM axes (including Souche).
+            if ((entry.categories && entry.categories.length >= 2) ||
+                (entry.rawCategories && entry.rawCategories.length >= 2)) {
+                splomDimensions.push(col)
+            }
+        } else {
+            numericDimensions.push(col)
+            splomDimensions.push(col)
+        }
+    })
+
+    if (yeastColumn) {
+        const yeastIndex = categoricalColumns.indexOf(yeastColumn)
+        if (yeastIndex > 0) {
+            categoricalColumns.splice(yeastIndex, 1)
+            categoricalColumns.unshift(yeastColumn)
+        } else if (yeastIndex === -1) {
+            categoricalColumns.unshift(yeastColumn)
+            if (splomDimensions.indexOf(yeastColumn) === -1) splomDimensions.unshift(yeastColumn)
+        }
+    }
 
     return {
         allColumns: allColumns,
         numericDimensions: numericDimensions,
         metadataColumns: metadataColumns,
-        yeastColumn: yeastColumn
+        categoricalColumns: categoricalColumns,
+        splomDimensions: splomDimensions,
+        yeastColumn: yeastColumn,
+        columnMetadata: meta
     }
 }
 
 function getUniqueMetadataValues(data, columnName) {
     if (!data || !columnName) return []
+    if (columnMetadata.isCategoricalDimension(columnName)) {
+        const raw = columnMetadata.getRawCategoryDomain(columnName)
+        if (raw.length) return raw.slice()
+    }
     const seen = new Set()
     const out = []
     for (let i = 0; i < data.length; i++) {
@@ -29306,12 +30097,14 @@ module.exports = {
     isInternalProgrammaticColumn: isInternalProgrammaticColumn,
     isNumericDimension: isNumericDimension,
     detectYeastColumn: detectYeastColumn,
+    isCategoricalGroupingColumn: isCategoricalGroupingColumn,
+    detectCategoricalColumns: detectCategoricalColumns,
     classifyDatasetColumns: classifyDatasetColumns,
     getUniqueMetadataValues: getUniqueMetadataValues,
     getRowsForSelectedMetadataValues: getRowsForSelectedMetadataValues
 }
 
-},{}],84:[function(require,module,exports){
+},{"./columnMetadata":82}],85:[function(require,module,exports){
 const d3 = require('d3');
 
 const DEFAULT_DATASET_ID = 'builtin-aromopti-100';
@@ -29322,6 +30115,12 @@ const BUILTIN_DATASETS = [
     { id: 'builtin-ynes-100', name: 'YNES-100', url: '/static/data/YNES-100.csv' },
     { id: 'builtin-fermentations-1000', name: 'Fermentations (1000 rows)', url: '/static/data/260115_5324_fermentations_1000.csv' },
     { id: 'builtin-fermentations-5324', name: 'Fermentations (~5324 rows, souche comparison)', url: '/static/data/260115_5324_fermentations.csv' },
+    { id: 'builtin-winedata-5000', name: 'Wine mock (5000 rows)', url: '/static/data/winedata_mock_5000.csv' },
+    {
+        id: 'builtin-souche-compare-demo',
+        name: 'Souche compare demo (Alpha/Beta/Gamma)',
+        url: '/static/data/souche-compare-demo.csv'
+    },
 ];
 
 const STORAGE_KEY = 'visprom_saved_datasets_v1';
@@ -29635,7 +30434,12 @@ function saveUploadedDataset(name, csvText) {
 function getDatasetMetaById(id) {
     const selectedId = id || getSelectedDatasetId();
     const builtin = BUILTIN_DATASETS.find(function (d) { return d.id === selectedId; });
-    if (builtin) return { id: builtin.id, name: builtin.name };
+    if (builtin) {
+        return {
+            id: builtin.id,
+            name: builtin.name
+        };
+    }
     const session = readSessionDataset();
     if (session && session.id === selectedId) {
         return { id: session.id, name: session.name };
@@ -29820,7 +30624,17 @@ function initDatasetSelector(mountNode) {
         .attr('id', 'datasetUpload')
         .attr('accept', '.csv,.txt,.tsv,text/csv,text/plain');
 
+    const compareUploadLabel = mainRow.append('label')
+        .attr('class', 'datasetUploadBtn datasetCompareUploadBtn')
+        .attr('title', 'Upload a second CSV to overlay in SPLOM Compare mode (needs ≥2 shared numeric columns)')
+        .text('Upload comparison CSV');
+    const compareFileInput = compareUploadLabel.append('input')
+        .attr('type', 'file')
+        .attr('id', 'comparisonDatasetUpload')
+        .attr('accept', '.csv,.txt,.tsv,.json,text/csv,text/plain,application/json');
+
     const status = root.append('div').attr('class', 'datasetStatus');
+    const compareStatus = root.append('div').attr('class', 'datasetCompareStatus');
 
     let dropdownOpen = false;
 
@@ -29922,6 +30736,38 @@ function initDatasetSelector(mountNode) {
 
     refreshOptions();
 
+    function setCompareStatus(message, isError) {
+        compareStatus
+            .text(message || '')
+            .style('color', isError ? '#b42318' : '#0b6b2e');
+    }
+
+    // Used by tool.js to surface comparison load/match feedback.
+    if (typeof window !== 'undefined') {
+        window.__vispromSetComparisonUploadStatus = setCompareStatus;
+    }
+
+    compareFileInput.on('change', function () {
+        const file = this.files && this.files[0];
+        if (!file) return;
+        setCompareStatus('Loading comparison dataset…', false);
+        if (typeof window.applyComparisonDatasetUpload === 'function') {
+            window.applyComparisonDatasetUpload(file)
+                .then(function () {
+                    compareFileInput.property('value', '');
+                })
+                .catch(function (err) {
+                    const msg = err && err.message ? err.message : String(err || 'Comparison upload failed.');
+                    setCompareStatus(msg, true);
+                    compareFileInput.property('value', '');
+                    console.error('[Dataset] comparison upload failed:', err);
+                });
+            return;
+        }
+        setCompareStatus('Comparison upload is not available yet. Wait for the app to finish loading.', true);
+        compareFileInput.property('value', '');
+    });
+
     fileInput.on('change', function () {
         const file = this.files && this.files[0];
         if (!file) return;
@@ -29975,7 +30821,352 @@ exports.deleteSavedDataset = deleteSavedDataset;
 exports.listSavedUploads = listSavedUploads;
 exports.isBuiltinDataset = isBuiltinDataset;
 
-},{"d3":32}],85:[function(require,module,exports){
+},{"d3":32}],86:[function(require,module,exports){
+/**
+ * 1D distribution overlays for SPLOM diagonals and the main-chart detail view.
+ * Compare mode: one density curve per group (e.g. LMD13 vs LMD22), greyed under the dim label.
+ */
+const d3 = require('d3')
+
+const DEFAULT_PALETTE = ['#1d4ed8', '#dc2626', '#059669', '#7c3aed']
+
+function collectNumericValues(rows, dim) {
+  const out = []
+  if (!rows || !dim) return out
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || row.visibility === false) continue
+    const n = Number(row[dim])
+    if (Number.isFinite(n)) out.push(n)
+  }
+  return out
+}
+
+/** Simple Gaussian KDE → dens[samples] over [x0, x1]. O(n * samples). */
+function kdeCurve(values, x0, x1, samples) {
+  const n = values.length
+  const steps = Math.max(16, samples || 48)
+  if (!n || !Number.isFinite(x0) || !Number.isFinite(x1) || x1 <= x0) {
+    return { xs: [], dens: [], peak: 0 }
+  }
+  const sorted = values.slice().sort(d3.ascending)
+  const iqr = d3.quantile(sorted, 0.75) - d3.quantile(sorted, 0.25)
+  const std = d3.deviation(sorted) || 1
+  const span = x1 - x0
+  let bw = 1.06 * Math.min(std, iqr / 1.34) * Math.pow(n, -0.2)
+  if (!Number.isFinite(bw) || bw <= 0) bw = span / 20
+  bw = Math.max(bw, span / 80)
+
+  const xs = []
+  const dens = []
+  let peak = 0
+  const inv = 1 / (bw * Math.sqrt(2 * Math.PI) * n)
+  for (let s = 0; s <= steps; s++) {
+    const x = x0 + (span * s) / steps
+    let sum = 0
+    for (let i = 0; i < n; i++) {
+      const u = (x - values[i]) / bw
+      sum += Math.exp(-0.5 * u * u)
+    }
+    const y = sum * inv
+    xs.push(x)
+    dens.push(y)
+    if (y > peak) peak = y
+  }
+  return { xs: xs, dens: dens, peak: peak }
+}
+
+function resolveExtent(valuesList, domainHint) {
+  if (domainHint && Array.isArray(domainHint) && domainHint.length >= 2 &&
+      Number.isFinite(domainHint[0]) && Number.isFinite(domainHint[1]) &&
+      domainHint[1] > domainHint[0]) {
+    return [domainHint[0], domainHint[1]]
+  }
+  let min = Infinity
+  let max = -Infinity
+  for (let g = 0; g < valuesList.length; g++) {
+    const vals = valuesList[g]
+    for (let i = 0; i < vals.length; i++) {
+      if (vals[i] < min) min = vals[i]
+      if (vals[i] > max) max = vals[i]
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1]
+  if (min === max) {
+    const pad = Math.abs(min) * 0.1 || 1
+    return [min - pad, max + pad]
+  }
+  const span = max - min
+  return [min - span * 0.05, max + span * 0.05]
+}
+
+/**
+ * @param {Array<{label:string, values:number[], color?:string}>} series
+ * @param {{extent?:[number,number], samples?:number}} options
+ */
+function buildDistributionSeries(series, options) {
+  const opts = options || {}
+  const cleaned = (series || []).map(function (s) {
+    return {
+      label: s.label || 'group',
+      values: (s.values || []).filter(Number.isFinite),
+      color: s.color || null
+    }
+  }).filter(function (s) { return s.values.length >= 2 })
+
+  const valuesList = cleaned.map(function (s) { return s.values })
+  const extent = resolveExtent(valuesList, opts.extent)
+  const samples = opts.samples || 48
+  let peak = 0
+  const curves = cleaned.map(function (s, i) {
+    const curve = kdeCurve(s.values, extent[0], extent[1], samples)
+    if (curve.peak > peak) peak = curve.peak
+    return {
+      label: s.label,
+      color: s.color || DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
+      xs: curve.xs,
+      dens: curve.dens,
+      peak: curve.peak,
+      n: s.values.length
+    }
+  })
+  return { extent: extent, peak: peak || 1, curves: curves }
+}
+
+function seriesFromRowGroups(groups, dim, domainHint) {
+  const series = (groups || []).map(function (g) {
+    return {
+      label: g.label || 'group',
+      values: collectNumericValues(g.rows, dim),
+      color: g.color
+    }
+  })
+  return buildDistributionSeries(series, { extent: domainHint, samples: 48 })
+}
+
+/**
+ * Mini diagonal: greyed area+line curves, dim label on top. Not selectable.
+ */
+function renderMiniDistribution(containerEl, model, dimLabel, options) {
+  const opts = options || {}
+  const el = typeof containerEl.node === 'function' ? containerEl.node() : containerEl
+  if (!el) return
+  const host = d3.select(el)
+  host.selectAll('*').remove()
+
+  const w = Math.max(24, opts.width || el.clientWidth || 72)
+  const h = Math.max(24, opts.height || el.clientHeight || 72)
+  const pad = Math.max(3, Math.floor(Math.min(w, h) * 0.08))
+
+  host.style('position', 'relative')
+    .style('cursor', opts.clickable ? 'pointer' : 'default')
+    .style('overflow', 'hidden')
+
+  const svg = host.append('svg')
+    .attr('class', 'splom-diag-dist')
+    .attr('width', w)
+    .attr('height', h)
+    .style('position', 'absolute')
+    .style('inset', '0')
+    .style('opacity', opts.bgOpacity != null ? opts.bgOpacity : 0.55)
+    .style('pointer-events', 'none')
+
+  const curves = (model && model.curves) || []
+  const peak = (model && model.peak) || 1
+  const extent = (model && model.extent) || [0, 1]
+  const x = d3.scaleLinear().domain(extent).range([pad, w - pad])
+  const y = d3.scaleLinear().domain([0, peak * 1.08]).range([h - pad, pad])
+
+  const muted = !!opts.muted
+  const fillOpacity = muted ? 0.12 : 0.18
+  const strokeOpacity = muted ? 0.55 : 0.75
+  const strokeWidth = muted ? 1.05 : 1.25
+
+  curves.forEach(function (curve) {
+    if (!curve.xs.length) return
+    const area = d3.area()
+      .x(function (_, i) { return x(curve.xs[i]) })
+      .y0(h - pad)
+      .y1(function (_, i) { return y(curve.dens[i]) })
+      .curve(d3.curveBasis)
+    const line = d3.line()
+      .x(function (_, i) { return x(curve.xs[i]) })
+      .y(function (_, i) { return y(curve.dens[i]) })
+      .curve(d3.curveBasis)
+
+    const pts = curve.xs.map(function (_, i) { return i })
+    svg.append('path')
+      .datum(pts)
+      .attr('d', area)
+      .attr('fill', curve.color)
+      .attr('fill-opacity', fillOpacity)
+      .attr('stroke', 'none')
+    svg.append('path')
+      .datum(pts)
+      .attr('d', line)
+      .attr('fill', 'none')
+      .attr('stroke', curve.color)
+      .attr('stroke-width', strokeWidth)
+      .attr('stroke-opacity', strokeOpacity)
+  })
+
+  host.append('span')
+    .attr('class', 'splom-diag-label')
+    .style('position', 'relative')
+    .style('z-index', '1')
+    .style('pointer-events', 'none')
+    .style('font-size', '11px')
+    .style('font-weight', '700')
+    .style('color', '#374151')
+    .style('text-shadow', '0 0 6px #f3f4f6, 0 0 3px #f3f4f6, 0 1px 0 #f9fafb')
+    .text(dimLabel || '')
+}
+
+/**
+ * Full main-chart distribution: axes, curves, legend. No brush/selection.
+ */
+function renderMainDistribution(svgSel, model, dimLabel, options) {
+  const opts = options || {}
+  const svg = svgSel
+  if (!svg || svg.empty()) return
+
+  const width = opts.width || Number(svg.attr('width')) || 640
+  const height = opts.height || Number(svg.attr('height')) || 420
+  const padL = 52
+  const padR = 20
+  const padT = 36
+  const padB = 48
+
+  svg.selectAll('*').remove()
+  svg.attr('width', width).attr('height', height)
+  svg.classed('distribution-view', true)
+
+  const g = svg.append('g').attr('class', 'distribution-root')
+  const curves = (model && model.curves) || []
+  const peak = (model && model.peak) || 1
+  const extent = (model && model.extent) || [0, 1]
+
+  const x = d3.scaleLinear().domain(extent).range([padL, width - padR])
+  const y = d3.scaleLinear().domain([0, peak * 1.1]).range([height - padB, padT])
+
+  g.append('g')
+    .attr('class', 'xAxis')
+    .attr('transform', 'translate(0,' + (height - padB) + ')')
+    .call(d3.axisBottom(x).ticks(6))
+  g.append('g')
+    .attr('class', 'yAxis')
+    .attr('transform', 'translate(' + padL + ',0)')
+    .call(d3.axisLeft(y).ticks(5).tickFormat(d3.format('.2~s')))
+
+  g.append('text')
+    .attr('class', 'xLabel')
+    .attr('x', (padL + width - padR) / 2)
+    .attr('y', height - 12)
+    .attr('text-anchor', 'middle')
+    .attr('fill', '#111827')
+    .style('font-size', '13px')
+    .style('font-weight', '600')
+    .text(dimLabel || '')
+
+  g.append('text')
+    .attr('class', 'yLabel')
+    .attr('transform', 'rotate(-90)')
+    .attr('x', -(padT + height - padB) / 2)
+    .attr('y', 14)
+    .attr('text-anchor', 'middle')
+    .attr('fill', '#111827')
+    .style('font-size', '12px')
+    .text('Density')
+
+  curves.forEach(function (curve) {
+    if (!curve.xs.length) return
+    const area = d3.area()
+      .x(function (_, i) { return x(curve.xs[i]) })
+      .y0(height - padB)
+      .y1(function (_, i) { return y(curve.dens[i]) })
+      .curve(d3.curveBasis)
+    const line = d3.line()
+      .x(function (_, i) { return x(curve.xs[i]) })
+      .y(function (_, i) { return y(curve.dens[i]) })
+      .curve(d3.curveBasis)
+    const pts = curve.xs.map(function (_, i) { return i })
+    g.append('path').datum(pts).attr('d', area)
+      .attr('fill', curve.color).attr('fill-opacity', 0.18).attr('stroke', 'none')
+    g.append('path').datum(pts).attr('d', line)
+      .attr('fill', 'none').attr('stroke', curve.color)
+      .attr('stroke-width', 2.5).attr('stroke-opacity', 0.95)
+
+    // Label near peak so each curve is named on the plot itself.
+    let peakI = 0
+    for (let i = 1; i < curve.dens.length; i++) {
+      if (curve.dens[i] > curve.dens[peakI]) peakI = i
+    }
+    const lx = x(curve.xs[peakI])
+    const ly = Math.max(padT + 10, y(curve.dens[peakI]) - 8)
+    g.append('text')
+      .attr('class', 'distribution-peak-label')
+      .attr('x', lx)
+      .attr('y', ly)
+      .attr('text-anchor', 'middle')
+      .attr('fill', curve.color)
+      .style('font-size', '12px')
+      .style('font-weight', '700')
+      .text(curve.label)
+  })
+
+  // Explicit legend box (top-right) — names + color swatches.
+  const legendPad = 8
+  const rowH = 18
+  const legendW = 150
+  const legendH = legendPad * 2 + Math.max(1, curves.length) * rowH
+  const legendX = Math.max(padL + 8, width - padR - legendW - 4)
+  const legendY = padT
+
+  const legend = g.append('g')
+    .attr('class', 'distribution-legend')
+    .attr('transform', 'translate(' + legendX + ',' + legendY + ')')
+  legend.append('rect')
+    .attr('width', legendW)
+    .attr('height', legendH)
+    .attr('rx', 4)
+    .attr('fill', '#ffffff')
+    .attr('fill-opacity', 0.92)
+    .attr('stroke', '#d1d5db')
+    .attr('stroke-width', 1)
+  curves.forEach(function (curve, i) {
+    const row = legend.append('g')
+      .attr('transform', 'translate(' + legendPad + ',' + (legendPad + i * rowH + 12) + ')')
+    row.append('line')
+      .attr('x1', 0).attr('x2', 22).attr('y1', 0).attr('y2', 0)
+      .attr('stroke', curve.color).attr('stroke-width', 3)
+      .attr('stroke-linecap', 'round')
+    row.append('text')
+      .attr('x', 28).attr('y', 4)
+      .attr('fill', '#111827')
+      .style('font-size', '12px')
+      .style('font-weight', '600')
+      .text(curve.label + ' (n=' + curve.n + ')')
+  })
+
+  g.append('text')
+    .attr('class', 'distribution-hint')
+    .attr('x', padL)
+    .attr('y', 14)
+    .attr('fill', '#6b7280')
+    .style('font-size', '11px')
+    .text('Distribution view — selection tools disabled')
+}
+
+module.exports = {
+  collectNumericValues: collectNumericValues,
+  kdeCurve: kdeCurve,
+  buildDistributionSeries: buildDistributionSeries,
+  seriesFromRowGroups: seriesFromRowGroups,
+  renderMiniDistribution: renderMiniDistribution,
+  renderMainDistribution: renderMainDistribution
+}
+
+},{"d3":32}],87:[function(require,module,exports){
 /**
  * Souche / yeast strain comparison helpers.
  */
@@ -30000,13 +31191,33 @@ function makeExperimentConditionKey(row) {
     }).join("|")
 }
 
+function buildSoucheRowIndex(allRows, yeastColumn) {
+    const index = new Map()
+    if (!allRows || !yeastColumn) return index
+    for (let i = 0; i < allRows.length; i++) {
+        const row = allRows[i]
+        if (!row) continue
+        const raw = row[yeastColumn]
+        if (raw == null || raw === "") continue
+        const key = String(raw)
+        let bucket = index.get(key)
+        if (!bucket) {
+            bucket = []
+            index.set(key, bucket)
+        }
+        bucket.push(row)
+    }
+    return index
+}
+
 function buildExperimentConditionIndex(allRows, yeastColumn, souches) {
     const byKey = new Map()
     const rowKeyBySoucheId = new Map()
     const rowLookup = new Map()
+    const rowIndex = buildSoucheRowIndex(allRows, yeastColumn)
 
     ;(souches || []).forEach(function (souche) {
-        getRowsForSouche(allRows, yeastColumn, souche).forEach(function (row) {
+        getRowsForSouche(allRows, yeastColumn, souche, rowIndex).forEach(function (row) {
             const rowId = row && row.__rowId != null ? row.__rowId : row && row.id
             if (rowId == null) return
             const key = makeExperimentConditionKey(row)
@@ -30135,9 +31346,10 @@ function createTabId() {
     return "souche-tab-" + Date.now() + "-" + Math.floor(Math.random() * 10000)
 }
 
-function getRowsForSouche(data, yeastColumn, soucheValue) {
+function getRowsForSouche(data, yeastColumn, soucheValue, rowIndex) {
     if (!data || !yeastColumn || soucheValue == null || soucheValue === "") return []
     const target = String(soucheValue)
+    if (rowIndex) return rowIndex.get(target) || []
     return data.filter(function (row) { return String(row[yeastColumn]) === target })
 }
 
@@ -30233,8 +31445,9 @@ function filterRowsForComparisonChart(rows, xDim, yDim) {
 }
 
 function computeComparisonDomainsAcrossSouches(rows, xDim, yDim, yeastColumn, souches) {
+    const rowIndex = buildSoucheRowIndex(rows, yeastColumn)
     const lists = (souches || []).map(function (souche) {
-        return filterRowsForComparisonChart(getRowsForSouche(rows, yeastColumn, souche), xDim, yDim)
+        return filterRowsForComparisonChart(getRowsForSouche(rows, yeastColumn, souche, rowIndex), xDim, yDim)
     })
     return {
         xDomain: combinedExtent(lists, xDim),
@@ -30379,15 +31592,6 @@ function drawSoucheComparisonChart(options) {
     if (highlightController) {
         highlightController.registerPanel(souche, points)
     }
-
-    console.log("[Comparison chart drawn]", {
-        souche: souche,
-        xDim: xDim,
-        yDim: yDim,
-        totalRows: chartRows.length,
-        selectedRows: selectedRows.length,
-        overlapRows: overlapRows.length
-    })
 }
 
 function starPath(cx, cy, outerR, innerR) {
@@ -30538,8 +31742,9 @@ function renderSoucheMiniChart(container, options) {
 }
 
 function buildSharedDomains(rows, yeastColumn, souches, xDim, yDim) {
+    const rowIndex = buildSoucheRowIndex(rows, yeastColumn)
     const lists = (souches || []).map(function (souche) {
-        return getRowsForSouche(rows, yeastColumn, souche)
+        return getRowsForSouche(rows, yeastColumn, souche, rowIndex)
     })
     return {
         xDomain: combinedExtent(lists, xDim),
@@ -30553,6 +31758,7 @@ module.exports = {
     SOUCHE_SERIES_COLORS: SOUCHE_SERIES_COLORS,
     MATCHING_INPUT_DIMS: MATCHING_INPUT_DIMS,
     createTabId: createTabId,
+    buildSoucheRowIndex: buildSoucheRowIndex,
     getRowsForSouche: getRowsForSouche,
     getSoucheFromRow: getSoucheFromRow,
     buildSoucheComparisonDomainMap: buildSoucheComparisonDomainMap,
@@ -30568,7 +31774,7 @@ module.exports = {
     renderSoucheMiniChart: renderSoucheMiniChart
 }
 
-},{"./comparisonDataset.js":82,"d3":32}],86:[function(require,module,exports){
+},{"./comparisonDataset.js":83,"d3":32}],88:[function(require,module,exports){
 /**
  * Standalone Souche comparison page (opened in a new browser tab).
  */
@@ -30789,30 +31995,6 @@ function renderComparison(state, rows) {
         metaEl.textContent = parts.join(' · ')
     }
 
-    console.log('[Comparison page state]', {
-        xDim: xDim,
-        yDim: yDim,
-        yeastColumn: yeastColumn,
-        souchesToCompare: allSouches,
-        selectionLayerCount: selectionLayers.length
-    })
-
-    allSouches.forEach(function (souche) {
-        console.log('[Comparison souche selections]', {
-            souche: souche,
-            layerCounts: selectionLayers.map(function (layer) {
-                return {
-                    layerId: layer.id,
-                    label: layer.label || layer.cname || layer.id,
-                    color: layer.color,
-                    countForSouche: layer.selectionsBySouche && layer.selectionsBySouche[souche]
-                        ? layer.selectionsBySouche[souche].length
-                        : 0
-                }
-            })
-        })
-    })
-
     if (!chartHost) return
 
     chartHost.innerHTML = ''
@@ -30958,19 +32140,10 @@ function setupSaveButton() {
 }
 
 function boot() {
-    console.log("[Souche comparison page script loaded]")
-    console.log("[Souche comparison DOM ready]")
     setupSaveButton()
     const params = new URLSearchParams(window.location.search)
     const comparisonId = params.get('comparisonId')
     const sessionId = params.get('sessionId')
-    console.log("[Souche comparison params]", { comparisonId: comparisonId, sessionId: sessionId })
-    const rawState = comparisonId ? sessionStorage.getItem(comparisonId) : null
-    const rawDataset = sessionStorage.getItem("visprom-current-dataset")
-    console.log("[Souche comparison storage]", {
-        hasState: !!rawState,
-        hasDataset: !!rawDataset
-    })
     if (!comparisonId) {
         showError('Missing comparison id. Open this page by double-clicking a SPLOM cell in VisProm.')
         return
@@ -31014,7 +32187,7 @@ if (document.readyState === 'loading') {
     boot()
 }
 
-},{"./datasetStore.js":84,"./soucheComparison.js":85,"./soucheComparisonStorage.js":87,"d3":32}],87:[function(require,module,exports){
+},{"./datasetStore.js":85,"./soucheComparison.js":87,"./soucheComparisonStorage.js":89,"d3":32}],89:[function(require,module,exports){
 /**
  * Souche comparison persistence (main app + comparison tab).
  * Saved pairs / opened tabs: sessionStorage only (reset each login).
@@ -31253,16 +32426,20 @@ module.exports = {
     clearAllComparisonStates: clearAllComparisonStates
 }
 
-},{}],88:[function(require,module,exports){
+},{}],90:[function(require,module,exports){
 const d3 = require("d3")
 const Stardust = require("stardust-core")
 const StardustWebGL = require("stardust-webgl")
 const splomCache = require("./splomCache.js")
 const chartRender = require("./chartRenderShared.js")
 const comparisonDataset = require("./comparisonDataset.js")
+const columnMetadata = require("./columnMetadata.js")
+const distributionCharts = require("./distributionCharts.js")
 
 const SPLom_CELL_BASE_PX = 72
-const SPLOM_REDRAW_BATCH = 16
+const SPLOM_REDRAW_BATCH = 28
+/** Cap points drawn in each mini SPLOM cell (main chart stays full-res). */
+const SPLOM_MINI_POINT_CAP = 520
 
 let splomOverviewOptions = {
     padding: 0.06,
@@ -31280,10 +32457,14 @@ let splomOverviewOptions = {
 }
 
 let splomLazyObserver = null
+let splomLazyScrollRoot = null
+let splomLazyScrollHandler = null
+let splomLazyScrollFrame = null
 let splomRedrawToken = 0
 let splomFamilyToggleHandler = null
 let splomVisitCountKeyFn = null
 let splomCellDblClickHandler = null
+let splomDiagClickHandler = null
 let temp = document.createElement("canvas")
 
 const resolveSplomVisitKey = (xDim, yDim, cellEl) => {
@@ -31515,11 +32696,29 @@ const getGlobalDomain = (data, dimension, padding, options) => {
     return [min - padAmt, max + padAmt]
 }
 
+const getGlobalDomainCached = (data, dimension, padding, options) => {
+    const opts = options || splomOverviewOptions
+    const dataLength = data && data.length != null ? data.length : 0
+    const key = splomCache.getDomainCacheKey(dimension, opts, dataLength)
+    const cached = splomCache.getCachedDomain(key)
+    if (cached) return cached.slice()
+    const domain = getGlobalDomain(data, dimension, padding, opts)
+    splomCache.setCachedDomain(key, domain.slice())
+    return domain
+}
+
 const buildSplomDomainMap = (data, dimensions, options) => {
     const opts = Object.assign({}, splomOverviewOptions, options || {})
     const globalDomains = {}
     for (const dim of dimensions) {
-        globalDomains[dim] = getGlobalDomain(data, dim, opts.padding, opts)
+        if (columnMetadata.isCategoricalDimension(dim)) {
+            globalDomains[dim] = {
+                type: "categorical",
+                categories: columnMetadata.getCategoryDomain(dim)
+            }
+        } else {
+            globalDomains[dim] = getGlobalDomainCached(data, dim, opts.padding, opts)
+        }
     }
     return globalDomains
 }
@@ -31650,17 +32849,29 @@ const applySplomCanvasSize = (canvasSel, w, h) => {
 }
 
 const getOrCacheRenderRows = (data, xDim, yDim, cacheTag) => {
-    const key = splomCache.getRowsCacheKey(xDim, yDim) + (cacheTag ? "|" + cacheTag : "")
+    const dataLength = data && data.length != null ? data.length : 0
+    const key = splomCache.getRowsCacheKey(xDim, yDim, cacheTag, dataLength) + "|cap" + SPLOM_MINI_POINT_CAP
     const cached = splomCache.getCachedRows(key)
     if (cached) return cached
-    const rows = chartRender.getChartRenderRows(data, xDim, yDim)
+    let rows = chartRender.getChartRenderRows(data, xDim, yDim)
+    if (rows.length > SPLOM_MINI_POINT_CAP) {
+        const step = rows.length / SPLOM_MINI_POINT_CAP
+        const sampled = new Array(SPLOM_MINI_POINT_CAP)
+        for (let i = 0; i < SPLOM_MINI_POINT_CAP; i++) {
+            sampled[i] = rows[Math.min(rows.length - 1, Math.floor(i * step))]
+        }
+        rows = sampled
+    }
     splomCache.setCachedRows(key, rows)
     return rows
 }
 
-const buildContourSvgHtml = (rows, xScale, yScale, cw, ch, overviewOptions) => {
+const buildContourSvgHtml = (rows, xScale, yScale, cw, ch, overviewOptions, xDim, yDim) => {
     const opts = Object.assign({}, splomOverviewOptions, overviewOptions || {})
     if (opts.drawContours === false) return null
+    if (columnMetadata.shouldSkipNumericMethod(xDim) || columnMetadata.shouldSkipNumericMethod(yDim)) {
+        return null
+    }
     if (!rows || rows.length < (opts.minContourPoints || 25)) return null
 
     const projected = []
@@ -31742,10 +32953,12 @@ const restoreContourSvg = (cell, contourHtml, cw, ch) => {
 }
 
 const ensureSplomContours = (cell, rows, scales, xDim, yDim, overviewOptions, cacheTag) => {
-    const key = splomCache.getContourCacheKey(xDim, yDim, scales.cw, scales.ch, overviewOptions) + (cacheTag ? "|" + cacheTag : "")
+    const key = splomCache.getContourCacheKey(xDim, yDim, scales.cw, scales.ch, overviewOptions)
+        + (cacheTag ? "|" + cacheTag : "")
+        + "|n" + (rows ? rows.length : 0)
     let contourHtml = splomCache.getCachedContour(key)
     if (!contourHtml) {
-        contourHtml = buildContourSvgHtml(rows, scales.xScale, scales.yScale, scales.cw, scales.ch, overviewOptions)
+        contourHtml = buildContourSvgHtml(rows, scales.xScale, scales.yScale, scales.cw, scales.ch, overviewOptions, xDim, yDim)
         if (contourHtml) splomCache.setCachedContour(key, contourHtml)
     }
     restoreContourSvg(cell, contourHtml, scales.cw, scales.ch)
@@ -31786,7 +32999,20 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
     if (!xDim || !yDim) return false
 
     const datasetSource = cellEl.getAttribute("data-dataset-source") || "primary"
+    const triangleSource = cellEl.getAttribute("data-triangle-source") || null
     const cellData = getSplomCellDataset(cellEl, splomContainer, data)
+
+    // Opt-in trace of the rows each triangle actually renders (set the array to enable).
+    if (typeof window !== "undefined" && window.__vispromSplomCellDebug) {
+        window.__vispromSplomCellDebug.push({
+            xDim: xDim,
+            yDim: yDim,
+            datasetSource: datasetSource,
+            triangleSource: triangleSource,
+            souche: cellEl.getAttribute("data-souche"),
+            rows: cellData ? cellData.length : 0
+        })
+    }
 
     const domainMap = splomContainer.property("__splomDomainMap")
     const overviewOptions = splomContainer.property("__splomOverviewOptions") || splomOverviewOptions
@@ -31803,13 +33029,26 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
     const baseRows = getOrCacheRenderRows(cellData, xDim, yDim, datasetSource)
     const rows = chartRender.applySelectionToRows(
         baseRows.map(function (r) {
-            return { row: r.row, rowId: r.rowId, x: r.x, y: r.y, selected: false, highlighted: false }
+            return {
+                row: r.row,
+                rowId: r.rowId,
+                x: r.x,
+                y: r.y,
+                xCategorical: r.xCategorical,
+                yCategorical: r.yCategorical,
+                selected: false,
+                highlighted: false
+            }
         }),
         selectedIdSet
     )
 
-    if (opts.drawContours !== false && overviewOptions.drawContours !== false) {
+    const skipContours = columnMetadata.shouldSkipNumericMethod(xDim) ||
+        columnMetadata.shouldSkipNumericMethod(yDim)
+    if (!skipContours && opts.drawContours !== false && overviewOptions.drawContours !== false && !opts.selectionOnly) {
         ensureSplomContours(cell, baseRows, scales, xDim, yDim, overviewOptions, datasetSource)
+    } else if (opts.selectionOnly && !skipContours) {
+        // Keep existing contours when only selection colors change.
     } else {
         cell.select(".splom-contour-svg").remove()
     }
@@ -31825,11 +33064,15 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
         baseRadius: baseRadius,
         highlightRadius: Math.max(baseRadius + 0.6, 2),
         densityMode: false,
-        previewHighlightRgba: opts.previewHighlightRgba || null
+        previewHighlightRgba: opts.previewHighlightRgba || null,
+        xCategorical: !!scales.xCategorical,
+        yCategorical: !!scales.yCategorical,
+        xDim: xDim,
+        yDim: yDim,
+        hasActiveSelection: !!(selectedIdSet && selectedIdSet.size)
     }
-    if (datasetSource === "comparison") {
-        drawOpts.baseColorRgba = comparisonDataset.COMPARISON_POINT_RGBA
-        drawOpts.highlightColorRgba = comparisonDataset.COMPARISON_POINT_RGBA_HIGHLIGHT
+    if (triangleSource === "upper") {
+        drawOpts.pointShape = "x"
     }
 
     chartRender.drawMiniScatterplot(Stardust, temp, canvas, rows, scales.xScale, scales.yScale, drawOpts)
@@ -31849,8 +33092,11 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
 const getSplomScrollRoot = (container) => {
     if (!container || !container.node) return null
     const node = container.node()
-    const panelBody = node.closest ? node.closest(".panel-body") : null
-    return panelBody || node
+    // SPLOM scrolls inside .splom (overflow:auto), not .splom-panel-body (overflow:visible).
+    if (node.classList && node.classList.contains("splom")) return node
+    const scrollEl = node.closest ? node.closest(".panel-splom .splom") : null
+    if (scrollEl) return scrollEl
+    return node
 }
 
 const isSplomCellVisible = (cellEl, root) => {
@@ -31928,6 +33174,15 @@ const teardownSplomLazyObserver = (container) => {
         splomLazyObserver.disconnect()
         splomLazyObserver = null
     }
+    if (splomLazyScrollRoot && splomLazyScrollHandler) {
+        splomLazyScrollRoot.removeEventListener("scroll", splomLazyScrollHandler)
+        splomLazyScrollRoot = null
+        splomLazyScrollHandler = null
+    }
+    if (splomLazyScrollFrame) {
+        cancelAnimationFrame(splomLazyScrollFrame)
+        splomLazyScrollFrame = null
+    }
     if (container && container.property) container.property("__splomLazyObserver", null)
 }
 
@@ -31967,6 +33222,20 @@ const setupSplomLazyObserver = (container, data, selectedIdSet, overviewOptions,
         splomLazyObserver.observe(this)
     })
     runVisible()
+
+    if (root && root.addEventListener) {
+        splomLazyScrollRoot = root
+        splomLazyScrollHandler = function () {
+            if (splomLazyScrollFrame) return
+            if (window._splomZoomingActive) return
+            splomLazyScrollFrame = requestAnimationFrame(function () {
+                splomLazyScrollFrame = null
+                if (window._splomZoomingActive) return
+                runVisible()
+            })
+        }
+        root.addEventListener("scroll", splomLazyScrollHandler, { passive: true })
+    }
 }
 
 exports.setSplomSelectionCheckProvider = (fn) => {
@@ -32007,6 +33276,10 @@ function bindSplomCellDblClickHandlers(cellSel) {
 
 exports.setSplomCellDblClickHandler = (fn) => {
     splomCellDblClickHandler = typeof fn === "function" ? fn : null
+}
+
+exports.setSplomDiagClickHandler = (fn) => {
+    splomDiagClickHandler = typeof fn === "function" ? fn : null
 }
 
 exports.renderSplomFamilyToolbarOnly = (container, familyLayout) => {
@@ -32069,14 +33342,16 @@ exports.createSplom = (data, container, dimensions, sampleData, viewVisitcount, 
     splom.style("display", "flex")
         .style("flex-direction", "column")
         .style("row-gap", gap + "px")
-        .style("min-width", "max-content")
+        .style("width", "100%")
 
     if (compareMode) {
+        const lowerLabel = opts.lowerSouche || opts.primaryLabel || "Dataset 1"
+        const upperLabel = opts.upperSouche || opts.comparisonLabel || "Dataset 2"
         const legend = splom.append("div").attr("class", "splom-compare-legend")
         legend.append("span").attr("class", "splom-compare-legend-lower")
-            .text("Lower triangle: " + (opts.primaryLabel || "Dataset 1"))
+            .text("\u25CF Lower: " + lowerLabel)
         legend.append("span").attr("class", "splom-compare-legend-upper")
-            .text("Upper triangle: " + (opts.comparisonLabel || "Dataset 2"))
+            .text("\u2715 Upper: " + upperLabel)
     }
 
     if (familyLayout && familyLayout.groups && familyLayout.groups.length) {
@@ -32161,18 +33436,56 @@ exports.createSplom = (data, container, dimensions, sampleData, viewVisitcount, 
                 const diag = row.append("div")
                     .attr("class", "splom-diag-cell")
                     .attr("data-col-dim", dim2)
+                    .attr("data-diag-dim", dim1)
+                    .attr("data-distribution", "1")
                     .style("width", w + "px")
                     .style("height", h + "px")
                     .style("display", "flex")
                     .style("align-items", "center")
                     .style("justify-content", "center")
-                    .style("font-size", "11px")
-                    .style("font-weight", "600")
-                    .style("color", "#6b7280")
-                    .style("background", "#f9fafb")
+                    .style("background", "#f3f4f6")
                     .style("border", "1px solid #e5e7eb")
                     .style("box-sizing", "border-box")
-                diag.append("span").text(dim1)
+                    .style("position", "relative")
+                    .style("cursor", "pointer")
+                    .attr("title", "Open distribution for " + dim1)
+
+                // Density underlay only on the diagonal — never on scatter cells.
+                // Greyscale so it reads as background behind the dim label.
+                if (!columnMetadata.isCategoricalDimension(dim1)) {
+                    const domainHint = domainMap && domainMap[dim1]
+                    const extentHint = (domainHint && Array.isArray(domainHint))
+                        ? domainHint
+                        : (domainHint && domainHint.extent)
+                    const lowerLabel = opts.lowerSouche || opts.primaryLabel || "Lower"
+                    const upperLabel = opts.upperSouche || opts.comparisonLabel || "Upper"
+                    const model = distributionCharts.seriesFromRowGroups([
+                        { label: lowerLabel, rows: data || [], color: "#6b7280" },
+                        { label: upperLabel, rows: opts.comparisonData || [], color: "#9ca3af" }
+                    ], dim1, extentHint)
+                    distributionCharts.renderMiniDistribution(diag.node(), model, dim1, {
+                        width: w,
+                        height: h,
+                        clickable: true,
+                        bgOpacity: 0.42,
+                        muted: true
+                    })
+                } else {
+                    diag.append("span")
+                        .style("font-size", "11px")
+                        .style("font-weight", "600")
+                        .style("color", "#6b7280")
+                        .text(dim1)
+                }
+
+                diag.on("click.diagDist", function () {
+                    if (typeof splomDiagClickHandler === "function") {
+                        splomDiagClickHandler(dim1, {
+                            lowerLabel: opts.lowerSouche || opts.primaryLabel || "Lower",
+                            upperLabel: opts.upperSouche || opts.comparisonLabel || "Upper"
+                        })
+                    }
+                })
             } else if (shouldPlot) {
                 const datasetSource = (compareMode && j > i) ? "comparison" : "primary"
                 const triangleSource = compareMode ? ((j > i) ? "upper" : "lower") : null
@@ -32305,7 +33618,8 @@ exports.redrawSplomSelection = (data, splom, sampleData, selectedRows, highlight
     const visibleCells = []
     const offscreenCells = []
     const drawOptions = {
-        previewHighlightRgba: isPreview ? splom.property("__splomPreviewHighlightRgba") : null
+        previewHighlightRgba: isPreview ? splom.property("__splomPreviewHighlightRgba") : null,
+        selectionOnly: !isPreview
     }
 
     allCells.forEach(function (cellEl) {
@@ -32350,7 +33664,57 @@ exports.getOrComputeSplomDomainMap = (data, dimensions, domainSourceDims, overvi
     return buildSplomDomainMap(data, domainDims, overviewOptions)
 }
 exports.getGlobalDomain = getGlobalDomain
+exports.setSplomRowScopeKey = splomCache.setRowScopeKey
+exports.getSplomRowScopeKey = splomCache.getRowScopeKey
 exports.invalidateSplomCaches = splomCache.invalidateSplomCaches
+exports.invalidateSplomRowsCache = splomCache.invalidateSplomRowsCache
+exports.invalidateSplomDomainCache = splomCache.invalidateSplomDomainCache
+
+/**
+ * Fast path: same dimension grid, only row groups / labels changed (triangle swap).
+ * Updates data pointers + souche attrs and returns true so callers can redraw cells
+ * without wiping the SPLOM DOM.
+ */
+exports.tryUpdateSplomCompareDatasets = (container, primaryData, comparisonData, meta) => {
+    if (!container || container.empty()) return false
+    const compareMode = !!container.property("__splomCompareMode")
+    if (!compareMode) return false
+    const dims = container.property("__splomDimensions")
+    if (!dims || !dims.length) return false
+
+    const info = meta || {}
+    container.property("__splomOverviewData", primaryData || [])
+    container.property("__splomComparisonData", comparisonData || [])
+    if (info.domainMap) container.property("__splomDomainMap", info.domainMap)
+    if (info.primaryLabel) container.property("__splomPrimaryLabel", info.primaryLabel)
+    if (info.comparisonLabel) container.property("__splomComparisonLabel", info.comparisonLabel)
+
+    const lowerLabel = info.lowerSouche || info.primaryLabel || "Lower"
+    const upperLabel = info.upperSouche || info.comparisonLabel || "Upper"
+
+    container.selectAll(".splom-cell").each(function () {
+        const tri = this.getAttribute("data-triangle-source")
+        if (tri === "upper") {
+            this.setAttribute("data-souche", upperLabel)
+            this.setAttribute("data-visit-souche-key", String(upperLabel))
+        } else if (tri === "lower") {
+            this.setAttribute("data-souche", lowerLabel)
+            this.setAttribute("data-visit-souche-key", String(lowerLabel))
+        }
+    })
+
+    const legend = container.select(".splom-compare-legend")
+    if (!legend.empty()) {
+        legend.select(".splom-compare-legend-lower").text("\u25CF Lower: " + lowerLabel)
+        legend.select(".splom-compare-legend-upper").text("\u2715 Upper: " + upperLabel)
+    }
+
+    // Force pending paint so visible cells refresh with new rows.
+    container.selectAll(".splom-cell")
+        .attr("data-splom-pending", "1")
+        .attr("data-splom-rendered", "0")
+    return true
+}
 exports.bumpSplomDatasetVersion = splomCache.bumpDatasetVersion
 exports.getDimensionSetCacheKey = splomCache.getDimensionSetCacheKey
 exports.getCachedDimensionSet = splomCache.getCachedDimensionSet
@@ -32404,7 +33768,7 @@ exports.renderPendingVisibleSplomCells = (data, splom, viewVisitcount, maxSplomA
     })
 }
 
-},{"./chartRenderShared.js":81,"./comparisonDataset.js":82,"./splomCache.js":89,"d3":32,"stardust-core":71,"stardust-webgl":75}],89:[function(require,module,exports){
+},{"./chartRenderShared.js":81,"./columnMetadata.js":82,"./comparisonDataset.js":83,"./distributionCharts.js":86,"./splomCache.js":91,"d3":32,"stardust-core":71,"stardust-webgl":75}],91:[function(require,module,exports){
 /**
  * SPLOM caches — rows, contours, and dimension-set layout only.
  * Selection state is never cached.
@@ -32413,15 +33777,18 @@ exports.renderPendingVisibleSplomCells = (data, splom, viewVisitcount, maxSplomA
 const ROWS_CACHE_MAX = 512
 const CONTOUR_CACHE_MAX = 256
 const DIMENSION_SET_CACHE_MAX = 32
+const DOMAIN_CACHE_MAX = 256
 
 const DEBUG_SPLOM_CACHE = false
 
 const splomRowsCache = new Map()
 const splomContourCache = new Map()
 const splomDimensionSetCache = new Map()
+const splomDomainCache = new Map()
 
 let datasetVersion = 0
 let datasetLabel = "current"
+let rowScopeKey = "all"
 
 function bumpDatasetVersion(label) {
     datasetVersion += 1
@@ -32432,11 +33799,31 @@ function getDatasetId() {
     return datasetLabel + "@v" + datasetVersion
 }
 
+function setRowScopeKey(scopeKey) {
+    rowScopeKey = scopeKey ? String(scopeKey) : "all"
+}
+
+function getRowScopeKey() {
+    return rowScopeKey
+}
+
+function invalidateSplomRowsCache(reason) {
+    if (DEBUG_SPLOM_CACHE) console.log("[SPLOM cache] invalidate rows:", reason)
+    splomRowsCache.clear()
+    splomContourCache.clear()
+}
+
+function invalidateSplomDomainCache(reason) {
+    if (DEBUG_SPLOM_CACHE) console.log("[SPLOM cache] invalidate domains:", reason)
+    splomDomainCache.clear()
+}
+
 function invalidateSplomCaches(reason) {
-    if (DEBUG_SPLOM_CACHE) console.log("[SPLOM cache] invalidate:", reason)
+    if (DEBUG_SPLOM_CACHE) console.log("[SPLOM cache] invalidate all:", reason)
     splomRowsCache.clear()
     splomContourCache.clear()
     splomDimensionSetCache.clear()
+    splomDomainCache.clear()
 }
 
 function staticOptionsKeyPart(options) {
@@ -32453,13 +33840,31 @@ function staticOptionsKeyPart(options) {
     ].join(":")
 }
 
-function getRowsCacheKey(xDim, yDim) {
-    return getDatasetId() + "|" + xDim + "|" + yDim
+function getRowsCacheKey(xDim, yDim, cacheTag, dataLength) {
+    return [
+        getDatasetId(),
+        getRowScopeKey(),
+        xDim,
+        yDim,
+        dataLength != null ? "n" + dataLength : "n0",
+        cacheTag || "primary"
+    ].join("|")
+}
+
+function getDomainCacheKey(dimension, overviewOptions, dataLength) {
+    return [
+        getDatasetId(),
+        getRowScopeKey(),
+        dimension,
+        dataLength != null ? "n" + dataLength : "n0",
+        staticOptionsKeyPart(overviewOptions)
+    ].join("|")
 }
 
 function getContourCacheKey(xDim, yDim, cellW, cellH, overviewOptions) {
     return [
         getDatasetId(),
+        getRowScopeKey(),
         xDim,
         yDim,
         cellW,
@@ -32493,6 +33898,18 @@ function trimMap(map, max) {
     while (map.size > max) {
         map.delete(map.keys().next().value)
     }
+}
+
+function getCachedDomain(key) {
+    const hit = splomDomainCache.get(key)
+    if (hit && DEBUG_SPLOM_CACHE) console.log("[SPLOM] domain cache hit", key)
+    return hit || null
+}
+
+function setCachedDomain(key, domain) {
+    if (DEBUG_SPLOM_CACHE) console.log("[SPLOM] domain cache miss", key)
+    splomDomainCache.set(key, domain)
+    trimMap(splomDomainCache, DOMAIN_CACHE_MAX)
 }
 
 function getCachedRows(key) {
@@ -32534,13 +33951,20 @@ function setCachedDimensionSet(key, entry) {
 module.exports = {
     bumpDatasetVersion: bumpDatasetVersion,
     getDatasetId: getDatasetId,
+    setRowScopeKey: setRowScopeKey,
+    getRowScopeKey: getRowScopeKey,
     invalidateSplomCaches: invalidateSplomCaches,
+    invalidateSplomRowsCache: invalidateSplomRowsCache,
+    invalidateSplomDomainCache: invalidateSplomDomainCache,
     getRowsCacheKey: getRowsCacheKey,
+    getDomainCacheKey: getDomainCacheKey,
     getContourCacheKey: getContourCacheKey,
     getDimensionSetCacheKey: getDimensionSetCacheKey,
     getFamilyLayoutKeyPart: getFamilyLayoutKeyPart,
     getCachedRows: getCachedRows,
     setCachedRows: setCachedRows,
+    getCachedDomain: getCachedDomain,
+    setCachedDomain: setCachedDomain,
     getCachedContour: getCachedContour,
     setCachedContour: setCachedContour,
     getCachedDimensionSet: getCachedDimensionSet,
@@ -32548,4 +33972,4 @@ module.exports = {
     staticOptionsKeyPart: staticOptionsKeyPart
 }
 
-},{}]},{},[86]);
+},{}]},{},[88]);

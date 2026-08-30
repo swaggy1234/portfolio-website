@@ -1,8 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import {
-  getScreenBounds,
-  launchVispromMacApp,
-} from '../utils/launchVispromApp';
+import { useEffect, useState } from 'react';
 import './VispromPopup.css';
 
 async function resolvePdfBlobUrl(url) {
@@ -28,22 +24,18 @@ export default function VispromPopup({
   projectUrl = '',
   onlineUrl = '',
   paperUrl = '',
-  paperTitle = 'Visprom++',
+  paperTitle = 'Visprom ++ Paper',
   title = 'Project',
   iframeTitle = 'Project preview',
   kind = 'iframe',
   githubUrl = '',
   description = '',
-  vispromLaunchMode = 'app',
+  vispromVersion = '',
 }) {
-  const frameRef = useRef(null);
   const [pdfUrl, setPdfUrl] = useState('');
   const [pdfError, setPdfError] = useState('');
   const [pdfLoading, setPdfLoading] = useState(false);
-  const [view, setView] = useState('app');
-  const [appLaunching, setAppLaunching] = useState(false);
-  const [appLaunched, setAppLaunched] = useState(false);
-  const [appLaunchError, setAppLaunchError] = useState('');
+  const [view, setView] = useState('demo');
 
   const isVisprom = kind === 'visprom';
   const isPdf = kind === 'pdf' || (!isVisprom && projectUrl.toLowerCase().includes('.pdf'));
@@ -55,7 +47,7 @@ export default function VispromPopup({
   const resolvedOnlineUrl = onlineUrl || projectUrl;
   const resolvedPaperUrl = paperUrl || projectUrl;
   const activeContentUrl =
-    view === 'paper' ? resolvedPaperUrl : view === 'online' ? resolvedOnlineUrl : '';
+    view === 'paper' ? resolvedPaperUrl : view === 'demo' ? resolvedOnlineUrl : '';
 
   useEffect(() => {
     if (!open) return undefined;
@@ -74,43 +66,9 @@ export default function VispromPopup({
   }, [open, onClose]);
 
   useEffect(() => {
-    if (!open) {
-      setAppLaunched(false);
-      setAppLaunchError('');
-      return;
-    }
-    setView(isVisprom ? (vispromLaunchMode === 'online' ? 'online' : 'app') : isPdf ? 'pdf' : 'online');
-    setAppLaunched(false);
-    setAppLaunchError('');
-  }, [open, isVisprom, isPdf, vispromLaunchMode]);
-
-  const launchAppAtFrame = async () => {
-    setAppLaunching(true);
-    setAppLaunchError('');
-    const bounds = getScreenBounds(frameRef.current);
-    const launched = await launchVispromMacApp(bounds);
-    setAppLaunching(false);
-    if (launched) {
-      setAppLaunched(true);
-      return;
-    }
-    setAppLaunchError('Could not launch VisProm.app. Try Online or GitHub instead.');
-  };
-
-  useLayoutEffect(() => {
-    if (!open || !isVisprom || view !== 'app') return undefined;
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (!cancelled) launchAppAtFrame();
-    }, 80);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isVisprom, view]);
+    if (!open) return;
+    setView(isVisprom ? 'demo' : isPdf ? 'pdf' : 'demo');
+  }, [open, isVisprom, isPdf]);
 
   useEffect(() => {
     let revoked = '';
@@ -188,7 +146,7 @@ export default function VispromPopup({
                 ⌘
               </a>
             ) : null}
-            {activeContentUrl && view !== 'app' ? (
+            {activeContentUrl ? (
               <a
                 className="visprom-popup__control visprom-popup__control--link"
                 href={openHref}
@@ -216,20 +174,11 @@ export default function VispromPopup({
             <button
               type="button"
               role="tab"
-              aria-selected={view === 'app'}
-              className={`visprom-popup__tab${view === 'app' ? ' visprom-popup__tab--active' : ''}`}
-              onClick={() => setView('app')}
+              aria-selected={view === 'demo'}
+              className={`visprom-popup__tab${view === 'demo' ? ' visprom-popup__tab--active' : ''}`}
+              onClick={() => setView('demo')}
             >
-              Mac app
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === 'online'}
-              className={`visprom-popup__tab${view === 'online' ? ' visprom-popup__tab--active' : ''}`}
-              onClick={() => setView('online')}
-            >
-              Online
+              Demo
             </button>
             {resolvedPaperUrl ? (
               <button
@@ -245,7 +194,13 @@ export default function VispromPopup({
           </div>
         ) : null}
 
-        {aboutParagraphs.length ? (
+        {isVisprom && vispromVersion ? (
+          <p className="visprom-popup__version">
+            Latest from GitHub · <code>{vispromVersion}</code>
+          </p>
+        ) : null}
+
+        {aboutParagraphs.length && !isVisprom ? (
           <div className="visprom-popup__about">
             <p className="visprom-popup__about-label">About this project</p>
             <div className="visprom-popup__about-body">
@@ -256,34 +211,8 @@ export default function VispromPopup({
           </div>
         ) : null}
 
-        {isVisprom && view === 'app' ? (
-          <div className="visprom-popup__app-hint">
-            {appLaunching
-              ? 'Opening VisProm and fitting it to the frame below…'
-              : appLaunched
-                ? 'VisProm is aligned to the dashed frame (where the online demo would be).'
-                : 'The Mac app opens in the dashed frame below.'}
-            <button
-              type="button"
-              className="visprom-popup__inline-link"
-              onClick={launchAppAtFrame}
-              disabled={appLaunching}
-            >
-              {appLaunching ? 'Opening…' : 'Re-open app'}
-            </button>
-            {appLaunchError ? <span className="visprom-popup__app-error"> · {appLaunchError}</span> : null}
-          </div>
-        ) : null}
-
-        <div
-          ref={frameRef}
-          className={`visprom-popup__frame${isVisprom && view === 'app' ? ' visprom-popup__frame--app-slot' : ''}`}
-        >
-          {isVisprom && view === 'app' ? (
-            <div className="visprom-popup__app-slot-label" aria-hidden="true">
-              VisProm desktop window
-            </div>
-          ) : showPdfFrame ? (
+        <div className="visprom-popup__frame">
+          {showPdfFrame ? (
             pdfLoading ? (
               <p className="visprom-popup__fallback">Loading {paperTitle}…</p>
             ) : pdfError ? (
@@ -301,13 +230,15 @@ export default function VispromPopup({
                 title={isVisprom && view === 'paper' ? paperTitle : iframeTitle}
               />
             )
-          ) : (
+          ) : resolvedOnlineUrl ? (
             <iframe
               key={resolvedOnlineUrl}
               className="visprom-popup__iframe"
               src={resolvedOnlineUrl}
               title={iframeTitle}
             />
+          ) : (
+            <p className="visprom-popup__fallback">Demo unavailable.</p>
           )}
         </div>
       </div>

@@ -60,7 +60,6 @@
 
   function getOrAskUserName() {
     return new Promise(function (resolve) {
-      console.log('[User init] asking for name');
       hideAppLoader();
       hideNameModal();
 
@@ -87,7 +86,6 @@
           return;
         }
         setSessionUserName(name);
-        console.log('[User init] name submitted:', name);
         hideNameModal();
         resolve(name);
       }
@@ -113,7 +111,7 @@
       }
     } catch (e) { /* ignore */ }
     // Fallback when preload link is missing.
-    return 'static/js/res.js?v=selection-workflow-v106';
+    return 'static/js/res.js?v=selection-workflow-v151';
   }
 
   function loadAppBundle() {
@@ -125,7 +123,6 @@
     script.src = src;
     script.async = false;
     script.onload = function () {
-      console.log('[Startup] starting VisProm');
       if (typeof global.startVispromApplication === 'function') {
         global.startVispromApplication();
       } else {

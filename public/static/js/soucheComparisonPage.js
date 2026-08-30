@@ -218,30 +218,6 @@ function renderComparison(state, rows) {
         metaEl.textContent = parts.join(' · ')
     }
 
-    console.log('[Comparison page state]', {
-        xDim: xDim,
-        yDim: yDim,
-        yeastColumn: yeastColumn,
-        souchesToCompare: allSouches,
-        selectionLayerCount: selectionLayers.length
-    })
-
-    allSouches.forEach(function (souche) {
-        console.log('[Comparison souche selections]', {
-            souche: souche,
-            layerCounts: selectionLayers.map(function (layer) {
-                return {
-                    layerId: layer.id,
-                    label: layer.label || layer.cname || layer.id,
-                    color: layer.color,
-                    countForSouche: layer.selectionsBySouche && layer.selectionsBySouche[souche]
-                        ? layer.selectionsBySouche[souche].length
-                        : 0
-                }
-            })
-        })
-    })
-
     if (!chartHost) return
 
     chartHost.innerHTML = ''
@@ -387,19 +363,10 @@ function setupSaveButton() {
 }
 
 function boot() {
-    console.log("[Souche comparison page script loaded]")
-    console.log("[Souche comparison DOM ready]")
     setupSaveButton()
     const params = new URLSearchParams(window.location.search)
     const comparisonId = params.get('comparisonId')
     const sessionId = params.get('sessionId')
-    console.log("[Souche comparison params]", { comparisonId: comparisonId, sessionId: sessionId })
-    const rawState = comparisonId ? sessionStorage.getItem(comparisonId) : null
-    const rawDataset = sessionStorage.getItem("visprom-current-dataset")
-    console.log("[Souche comparison storage]", {
-        hasState: !!rawState,
-        hasDataset: !!rawDataset
-    })
     if (!comparisonId) {
         showError('Missing comparison id. Open this page by double-clicking a SPLOM cell in VisProm.')
         return

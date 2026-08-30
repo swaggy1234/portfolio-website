@@ -3,6 +3,8 @@
  * Edit all text, links, and project details here.
  */
 
+import { vispromSync } from './vispromSync';
+
 export const siteConfig = {
   name: 'Sraghvi Anchaliya',
   monogram: 'SA',
@@ -49,12 +51,12 @@ export const projects = [
     tag: 'Research',
     image: '/images/visprom-cover.png',
     imageFit: 'contain',
-    link: '/visprom/index.html',
+    link: vispromSync.demoUrl,
     github: 'https://github.com/MIA-PS-Vis/UPSaclay-VisProm',
     popup: 'visprom',
-    popupUrl: '/visprom/index.html',
+    popupUrl: vispromSync.demoUrl,
     popupPaperAsset: 'vispromFinalPaper',
-    popupPaperTitle: 'Visprom++',
+    popupPaperTitle: 'Visprom ++ Paper',
     popupTitle: '@ VISPROM  ·  INRAE',
     description: [
       'VisProm is an interactive data visualization tool developed at INRAE to help scientists explore and interpret complex, high-dimensional scientific datasets.',

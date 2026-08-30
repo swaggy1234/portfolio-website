@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "sync:visprom": "node scripts/sync-visprom.mjs",
+    "prebuild": "node scripts/sync-visprom.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

@@ -5,7 +5,7 @@
 <html>
 
 <head>
-  <link rel="preload" href="/static/js/res.js?v=selection-workflow-v106" as="script">
+  <link rel="preload" href="/static/js/res.js?v=selection-workflow-v151" as="script">
 <style>
   #appShell { display: none; }
   html, body {
@@ -189,6 +189,10 @@
               <input id="time-slider" type="range" min="0" max="10" step="1" />
               <span id="time-slider-label">T0</span>
             </div>
+            <label id="mainChartSelectionModeControl" class="main-chart-selection-mode-label" title="Which comparison group a lasso or brush may select. The other group stays visible as faded context." hidden>
+              Selection mode:
+              <select id="mainChartSelectionModeSelect"></select>
+            </label>
             <label class="main-chart-mode-label" title="Original: classic points. Density: low-opacity points with contour overlay.">
               Main Chart Mode:
               <select id="mainChartModeSelect">
@@ -200,9 +204,11 @@
         </div>
         <div class="panel-body">
           <div id="main-chart-souche-navigator" class="main-chart-souche-navigator" hidden>
+            <label class="main-chart-category-variable-label" for="main-chart-category-variable-select">Category</label>
+            <select id="main-chart-category-variable-select" aria-label="Choose categorical variable"></select>
             <button type="button" id="prev-souche-btn">Previous</button>
             <span id="current-souche-label">Souche 1/6: LMD22</span>
-            <select id="souche-select" aria-label="Select Souche"></select>
+            <select id="souche-select" aria-label="Select group value"></select>
             <button type="button" id="next-souche-btn">Next</button>
           </div>
           <div id="main-chart-pair-title" class="main-chart-pair-title" hidden></div>
@@ -221,8 +227,8 @@
           <div class="panel-body">
             <div class="selectionType"></div>
             <div class="selectionTable"></div>
-            <div class="groupOp"></div>
-            <div class="colorOp"></div>
+            <div class="groupOp" hidden></div>
+            <div class="colorOp" hidden></div>
             <div class="extra"></div>
           </div>
         </section>
@@ -264,6 +270,14 @@
         <span>Number of contour lines</span>
         <input id="mainChartSettingsContourLevelsInput" type="number" min="2" step="1" />
       </label>
+      <label class="settings-modal-field" title="How many History items are shown in the History bar.">
+        <span>History size</span>
+        <input id="mainChartSettingsHistorySizeInput" type="number" min="1" step="1" />
+      </label>
+      <label class="settings-modal-field" title="How many Favorites are shown in the Favorites bar.">
+        <span>Favorites size</span>
+        <input id="mainChartSettingsFavoritesSizeInput" type="number" min="1" step="1" />
+      </label>
       <div class="settings-modal-actions">
         <button type="button" id="mainChartSettingsCancelBtn">Close</button>
         <button type="button" id="mainChartSettingsApplyBtn">Apply</button>
@@ -274,11 +288,16 @@
   <script>
   (function () {
     'use strict';
-    var defaults = { selections: 10, contourLevels: 8 };
+      var defaults = { selections: 10, contourLevels: 8, historySize: 6, favoritesSize: 6 };
 
     function getSettings() {
       if (!window.__vispromMainChartSettings) {
-        window.__vispromMainChartSettings = { selections: defaults.selections, contourLevels: defaults.contourLevels };
+        window.__vispromMainChartSettings = {
+          selections: defaults.selections,
+          contourLevels: defaults.contourLevels,
+          historySize: defaults.historySize,
+          favoritesSize: defaults.favoritesSize
+        };
       }
       return window.__vispromMainChartSettings;
     }
@@ -295,20 +314,26 @@
       var panel = document.getElementById('mainChartSettingsPanel');
       var selInput = document.getElementById('mainChartSettingsSelectionsInput');
       var contourInput = document.getElementById('mainChartSettingsContourLevelsInput');
+      var historySizeInput = document.getElementById('mainChartSettingsHistorySizeInput');
+      var favoritesSizeInput = document.getElementById('mainChartSettingsFavoritesSizeInput');
       var applyBtn = document.getElementById('mainChartSettingsApplyBtn');
       var cancelBtn = document.getElementById('mainChartSettingsCancelBtn');
-      if (!btn || !overlay || !panel || !selInput || !contourInput || !applyBtn || !cancelBtn) return;
+      if (!btn || !overlay || !panel || !selInput || !contourInput || !historySizeInput || !favoritesSizeInput || !applyBtn || !cancelBtn) return;
       if (btn.__vispromInlineSettingsBound) return;
       btn.__vispromInlineSettingsBound = true;
 
       var settings = getSettings();
       selInput.value = String(settings.selections);
       contourInput.value = String(settings.contourLevels);
+      historySizeInput.value = String(settings.historySize);
+      favoritesSizeInput.value = String(settings.favoritesSize);
 
       function openModal() {
         var s = getSettings();
         selInput.value = String(s.selections);
         contourInput.value = String(s.contourLevels);
+        historySizeInput.value = String(s.historySize);
+        favoritesSizeInput.value = String(s.favoritesSize);
         overlay.removeAttribute('hidden');
         btn.setAttribute('aria-expanded', 'true');
         setTimeout(function () { selInput.focus(); }, 0);
@@ -323,8 +348,12 @@
         var s = getSettings();
         s.selections = clampInt(selInput.value, 1, 99);
         s.contourLevels = clampInt(contourInput.value, 2, 32);
+        s.historySize = clampInt(historySizeInput.value, 1, 50);
+        s.favoritesSize = clampInt(favoritesSizeInput.value, 1, 50);
         selInput.value = String(s.selections);
         contourInput.value = String(s.contourLevels);
+        historySizeInput.value = String(s.historySize);
+        favoritesSizeInput.value = String(s.favoritesSize);
         if (typeof window.__vispromApplyMainChartSettings === 'function') {
           window.__vispromApplyMainChartSettings(s.selections, s.contourLevels);
         }
@@ -370,7 +399,7 @@
   })();
   </script>
 
-  <script src="/static/js/userInit.js?v=selection-workflow-v106"></script>
+  <script src="/static/js/userInit.js?v=selection-workflow-v151"></script>
 </body>
 <style>
 html, body { height: 100%; margin: 0; }
@@ -525,6 +554,63 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   min-height: 0;
 }
 .tableView, .splom, .selectionTable, .colorOp, .viewHistory { overflow: auto; }
+.history-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.history-entry {
+  width: 88px;
+  flex: 0 0 auto;
+  transition: transform 220ms ease, opacity 220ms ease, margin 220ms ease;
+  will-change: transform, opacity;
+}
+.history-entry svg.historyView,
+.history-entry svg.favorites {
+  display: block;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.history-entry-caption {
+  display: none;
+}
+.history-entry--enter {
+  animation: history-thumb-enter 260ms ease both;
+}
+.history-entry--shift {
+  animation: history-thumb-shift 220ms ease both;
+}
+.history-entry--exit {
+  animation: history-thumb-exit 200ms ease both;
+  pointer-events: none;
+}
+@keyframes history-thumb-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-18px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes history-thumb-shift {
+  from { transform: translateX(-12px); }
+  to { transform: translateX(0); }
+}
+@keyframes history-thumb-exit {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
 .panel-main .panel-body {
   overflow: hidden;
   display: flex;
@@ -605,7 +691,8 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   font-size: 12px;
   color: #111827;
 }
-.main-chart-mode-label {
+.main-chart-mode-label,
+.main-chart-selection-mode-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -613,6 +700,16 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   font-weight: 500;
   color: #374151;
   white-space: nowrap;
+}
+.main-chart-selection-mode-label[hidden] {
+  display: none !important;
+}
+#mainChartSelectionModeSelect {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
 }
 #mainChartModeSelect {
   font-size: 12px;
@@ -645,6 +742,18 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   background: #f0f9ff;
   color: #1e3a5f;
   font-weight: 600;
+}
+.main-chart-category-variable-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+#main-chart-category-variable-select,
+#souche-select {
+  font-size: 12px;
+  padding: 3px 6px;
+  max-width: 160px;
 }
 .main-chart-souche-navigator button:disabled {
   opacity: 0.45;
@@ -840,7 +949,9 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
 .splom-souche-dropdown-control {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  row-gap: 4px;
   margin-right: 10px;
 }
 .splom-souche-label {
@@ -851,8 +962,8 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
 }
 .splom-souche-select {
   height: 30px;
-  min-width: 140px;
-  max-width: 180px;
+  min-width: 110px;
+  max-width: 170px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
   background: #fff;
@@ -1082,6 +1193,16 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   white-space: nowrap;
 }
 .datasetUploadBtn input { display: none; }
+.datasetCompareUploadBtn {
+  background: #eef6ff;
+  border-color: #93c5fd;
+}
+.datasetCompareStatus {
+  font-size: 11px;
+  color: #0b6b2e;
+  line-height: 1.3;
+  max-width: 100%;
+}
 .datasetSavedDelete {
   flex: 0 0 auto;
   width: 22px;
@@ -1108,7 +1229,7 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   max-width: 100%;
 }
 
-.splom .splom-labels, .splom .splom-row { width: max-content; }
+.splom .splom-labels, .splom .splom-row { width: max-content; overflow: visible; }
 .splom .splom-labels { align-items: end; }
 .splom .splom-col-header { overflow: hidden; display: block; }
 .splom .tooltip { box-sizing: border-box; overflow: visible !important; position: relative; }
@@ -1130,7 +1251,8 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   z-index: 2;
 }
 .splom .splom-cell.active-splom-cell {
-  z-index: 3;
+  z-index: 8;
+  overflow: visible;
   border-color: transparent !important;
   border-width: 1px !important;
   outline: none;
@@ -1208,6 +1330,20 @@ body { overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
   font-weight: 600;
   color: #374151;
   margin-bottom: 2px;
+}
+.splom-diag-cell {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.splom-diag-cell:hover {
+  border-color: #9ca3af !important;
+  box-shadow: inset 0 0 0 1px rgba(75, 85, 99, 0.25);
+}
+.splom-diag-cell.splom-diag-active {
+  border-color: #4b5563 !important;
+  box-shadow: inset 0 0 0 2px rgba(75, 85, 99, 0.45);
+}
+.panel-selection.is-disabled {
+  user-select: none;
 }
 .splom-mode-control,
 .main-chart-view-control {

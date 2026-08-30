@@ -423,15 +423,6 @@ function drawSoucheComparisonChart(options) {
     if (highlightController) {
         highlightController.registerPanel(souche, points)
     }
-
-    console.log("[Comparison chart drawn]", {
-        souche: souche,
-        xDim: xDim,
-        yDim: yDim,
-        totalRows: chartRows.length,
-        selectedRows: selectedRows.length,
-        overlapRows: overlapRows.length
-    })
 }
 
 function starPath(cx, cy, outerR, innerR) {

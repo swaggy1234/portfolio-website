@@ -4,9 +4,13 @@ const StardustWebGL = require("stardust-webgl")
 const splomCache = require("./splomCache.js")
 const chartRender = require("./chartRenderShared.js")
 const comparisonDataset = require("./comparisonDataset.js")
+const columnMetadata = require("./columnMetadata.js")
+const distributionCharts = require("./distributionCharts.js")
 
 const SPLom_CELL_BASE_PX = 72
-const SPLOM_REDRAW_BATCH = 16
+const SPLOM_REDRAW_BATCH = 28
+/** Cap points drawn in each mini SPLOM cell (main chart stays full-res). */
+const SPLOM_MINI_POINT_CAP = 520
 
 let splomOverviewOptions = {
     padding: 0.06,
@@ -31,6 +35,7 @@ let splomRedrawToken = 0
 let splomFamilyToggleHandler = null
 let splomVisitCountKeyFn = null
 let splomCellDblClickHandler = null
+let splomDiagClickHandler = null
 let temp = document.createElement("canvas")
 
 const resolveSplomVisitKey = (xDim, yDim, cellEl) => {
@@ -277,7 +282,14 @@ const buildSplomDomainMap = (data, dimensions, options) => {
     const opts = Object.assign({}, splomOverviewOptions, options || {})
     const globalDomains = {}
     for (const dim of dimensions) {
-        globalDomains[dim] = getGlobalDomainCached(data, dim, opts.padding, opts)
+        if (columnMetadata.isCategoricalDimension(dim)) {
+            globalDomains[dim] = {
+                type: "categorical",
+                categories: columnMetadata.getCategoryDomain(dim)
+            }
+        } else {
+            globalDomains[dim] = getGlobalDomainCached(data, dim, opts.padding, opts)
+        }
     }
     return globalDomains
 }
@@ -409,17 +421,28 @@ const applySplomCanvasSize = (canvasSel, w, h) => {
 
 const getOrCacheRenderRows = (data, xDim, yDim, cacheTag) => {
     const dataLength = data && data.length != null ? data.length : 0
-    const key = splomCache.getRowsCacheKey(xDim, yDim, cacheTag, dataLength)
+    const key = splomCache.getRowsCacheKey(xDim, yDim, cacheTag, dataLength) + "|cap" + SPLOM_MINI_POINT_CAP
     const cached = splomCache.getCachedRows(key)
     if (cached) return cached
-    const rows = chartRender.getChartRenderRows(data, xDim, yDim)
+    let rows = chartRender.getChartRenderRows(data, xDim, yDim)
+    if (rows.length > SPLOM_MINI_POINT_CAP) {
+        const step = rows.length / SPLOM_MINI_POINT_CAP
+        const sampled = new Array(SPLOM_MINI_POINT_CAP)
+        for (let i = 0; i < SPLOM_MINI_POINT_CAP; i++) {
+            sampled[i] = rows[Math.min(rows.length - 1, Math.floor(i * step))]
+        }
+        rows = sampled
+    }
     splomCache.setCachedRows(key, rows)
     return rows
 }
 
-const buildContourSvgHtml = (rows, xScale, yScale, cw, ch, overviewOptions) => {
+const buildContourSvgHtml = (rows, xScale, yScale, cw, ch, overviewOptions, xDim, yDim) => {
     const opts = Object.assign({}, splomOverviewOptions, overviewOptions || {})
     if (opts.drawContours === false) return null
+    if (columnMetadata.shouldSkipNumericMethod(xDim) || columnMetadata.shouldSkipNumericMethod(yDim)) {
+        return null
+    }
     if (!rows || rows.length < (opts.minContourPoints || 25)) return null
 
     const projected = []
@@ -501,10 +524,12 @@ const restoreContourSvg = (cell, contourHtml, cw, ch) => {
 }
 
 const ensureSplomContours = (cell, rows, scales, xDim, yDim, overviewOptions, cacheTag) => {
-    const key = splomCache.getContourCacheKey(xDim, yDim, scales.cw, scales.ch, overviewOptions) + (cacheTag ? "|" + cacheTag : "")
+    const key = splomCache.getContourCacheKey(xDim, yDim, scales.cw, scales.ch, overviewOptions)
+        + (cacheTag ? "|" + cacheTag : "")
+        + "|n" + (rows ? rows.length : 0)
     let contourHtml = splomCache.getCachedContour(key)
     if (!contourHtml) {
-        contourHtml = buildContourSvgHtml(rows, scales.xScale, scales.yScale, scales.cw, scales.ch, overviewOptions)
+        contourHtml = buildContourSvgHtml(rows, scales.xScale, scales.yScale, scales.cw, scales.ch, overviewOptions, xDim, yDim)
         if (contourHtml) splomCache.setCachedContour(key, contourHtml)
     }
     restoreContourSvg(cell, contourHtml, scales.cw, scales.ch)
@@ -548,6 +573,18 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
     const triangleSource = cellEl.getAttribute("data-triangle-source") || null
     const cellData = getSplomCellDataset(cellEl, splomContainer, data)
 
+    // Opt-in trace of the rows each triangle actually renders (set the array to enable).
+    if (typeof window !== "undefined" && window.__vispromSplomCellDebug) {
+        window.__vispromSplomCellDebug.push({
+            xDim: xDim,
+            yDim: yDim,
+            datasetSource: datasetSource,
+            triangleSource: triangleSource,
+            souche: cellEl.getAttribute("data-souche"),
+            rows: cellData ? cellData.length : 0
+        })
+    }
+
     const domainMap = splomContainer.property("__splomDomainMap")
     const overviewOptions = splomContainer.property("__splomOverviewOptions") || splomOverviewOptions
     const cellW = splomContainer.property("__splomCellSize")
@@ -563,14 +600,25 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
     const baseRows = getOrCacheRenderRows(cellData, xDim, yDim, datasetSource)
     const rows = chartRender.applySelectionToRows(
         baseRows.map(function (r) {
-            return { row: r.row, rowId: r.rowId, x: r.x, y: r.y, selected: false, highlighted: false }
+            return {
+                row: r.row,
+                rowId: r.rowId,
+                x: r.x,
+                y: r.y,
+                xCategorical: r.xCategorical,
+                yCategorical: r.yCategorical,
+                selected: false,
+                highlighted: false
+            }
         }),
         selectedIdSet
     )
 
-    if (opts.drawContours !== false && overviewOptions.drawContours !== false && !opts.selectionOnly) {
+    const skipContours = columnMetadata.shouldSkipNumericMethod(xDim) ||
+        columnMetadata.shouldSkipNumericMethod(yDim)
+    if (!skipContours && opts.drawContours !== false && overviewOptions.drawContours !== false && !opts.selectionOnly) {
         ensureSplomContours(cell, baseRows, scales, xDim, yDim, overviewOptions, datasetSource)
-    } else if (opts.selectionOnly) {
+    } else if (opts.selectionOnly && !skipContours) {
         // Keep existing contours when only selection colors change.
     } else {
         cell.select(".splom-contour-svg").remove()
@@ -587,7 +635,14 @@ const redrawOneSplomCell = (cellEl, data, splomContainer, selectedIdSet, viewVis
         baseRadius: baseRadius,
         highlightRadius: Math.max(baseRadius + 0.6, 2),
         densityMode: false,
-        previewHighlightRgba: opts.previewHighlightRgba || null
+        previewHighlightRgba: opts.previewHighlightRgba || null,
+        xCategorical: !!scales.xCategorical,
+        yCategorical: !!scales.yCategorical,
+        xDim: xDim,
+        yDim: yDim,
+        hasActiveSelection: opts.hasActiveSelection != null
+            ? !!opts.hasActiveSelection
+            : !!(selectedIdSet && selectedIdSet.size)
     }
     if (triangleSource === "upper") {
         drawOpts.pointShape = "x"
@@ -745,8 +800,10 @@ const setupSplomLazyObserver = (container, data, selectedIdSet, overviewOptions,
         splomLazyScrollRoot = root
         splomLazyScrollHandler = function () {
             if (splomLazyScrollFrame) return
+            if (window._splomZoomingActive) return
             splomLazyScrollFrame = requestAnimationFrame(function () {
                 splomLazyScrollFrame = null
+                if (window._splomZoomingActive) return
                 runVisible()
             })
         }
@@ -792,6 +849,10 @@ function bindSplomCellDblClickHandlers(cellSel) {
 
 exports.setSplomCellDblClickHandler = (fn) => {
     splomCellDblClickHandler = typeof fn === "function" ? fn : null
+}
+
+exports.setSplomDiagClickHandler = (fn) => {
+    splomDiagClickHandler = typeof fn === "function" ? fn : null
 }
 
 exports.renderSplomFamilyToolbarOnly = (container, familyLayout) => {
@@ -948,18 +1009,57 @@ exports.createSplom = (data, container, dimensions, sampleData, viewVisitcount, 
                 const diag = row.append("div")
                     .attr("class", "splom-diag-cell")
                     .attr("data-col-dim", dim2)
+                    .attr("data-diag-dim", dim1)
+                    .attr("data-distribution", "1")
                     .style("width", w + "px")
                     .style("height", h + "px")
                     .style("display", "flex")
                     .style("align-items", "center")
                     .style("justify-content", "center")
-                    .style("font-size", "11px")
-                    .style("font-weight", "600")
-                    .style("color", "#6b7280")
-                    .style("background", "#f9fafb")
+                    .style("background", "#f3f4f6")
                     .style("border", "1px solid #e5e7eb")
                     .style("box-sizing", "border-box")
-                diag.append("span").text(dim1)
+                    .style("position", "relative")
+                    .style("cursor", "pointer")
+                    .attr("title", "Open distribution for " + dim1)
+
+                // Density underlay only on the diagonal — never on scatter cells.
+                // Greyscale so it reads as background behind the dim label.
+                if (!columnMetadata.isCategoricalDimension(dim1)) {
+                    const domainHint = domainMap && domainMap[dim1]
+                    const extentHint = (domainHint && Array.isArray(domainHint))
+                        ? domainHint
+                        : (domainHint && domainHint.extent)
+                    const lowerLabel = opts.lowerSouche || opts.primaryLabel || "Lower"
+                    const upperLabel = opts.upperSouche || opts.comparisonLabel || "Upper"
+                    const model = distributionCharts.seriesFromRowGroups([
+                        { label: lowerLabel, rows: data || [], color: "#4b5563", lineStyle: "solid" },
+                        { label: upperLabel, rows: opts.comparisonData || [], color: "#4b5563", lineStyle: "dotted" }
+                    ], dim1, extentHint)
+                    distributionCharts.renderMiniDistribution(diag.node(), model, dim1, {
+                        width: w,
+                        height: h,
+                        clickable: true,
+                        bgOpacity: 0.42,
+                        muted: true,
+                        neutralCompare: true
+                    })
+                } else {
+                    diag.append("span")
+                        .style("font-size", "11px")
+                        .style("font-weight", "600")
+                        .style("color", "#6b7280")
+                        .text(dim1)
+                }
+
+                diag.on("click.diagDist", function () {
+                    if (typeof splomDiagClickHandler === "function") {
+                        splomDiagClickHandler(dim1, {
+                            lowerLabel: opts.lowerSouche || opts.primaryLabel || "Lower",
+                            upperLabel: opts.upperSouche || opts.comparisonLabel || "Upper"
+                        })
+                    }
+                })
             } else if (shouldPlot) {
                 const datasetSource = (compareMode && j > i) ? "comparison" : "primary"
                 const triangleSource = compareMode ? ((j > i) ? "upper" : "lower") : null
@@ -1082,6 +1182,10 @@ exports.redrawSplomSelection = (data, splom, sampleData, selectedRows, highlight
     const selectedIdSet = isPreview
         ? overrideIdSet
         : buildSelectedIdSetFromRows(selectedRows || [])
+    const effectiveIdSet = (selectedIdSet && selectedIdSet.size > 0) ? selectedIdSet : null
+    const hasActiveSelection = isPreview
+        ? !!(overrideIdSet && overrideIdSet.size)
+        : !!(selectedRows && selectedRows.length)
     if (!isPreview) {
         splom.property("__splomSelectedIdSet", selectedIdSet)
         splom.property("__splomSelectedRows", selectedRows || [])
@@ -1093,7 +1197,8 @@ exports.redrawSplomSelection = (data, splom, sampleData, selectedRows, highlight
     const offscreenCells = []
     const drawOptions = {
         previewHighlightRgba: isPreview ? splom.property("__splomPreviewHighlightRgba") : null,
-        selectionOnly: !isPreview
+        selectionOnly: !isPreview,
+        hasActiveSelection: hasActiveSelection
     }
 
     allCells.forEach(function (cellEl) {
@@ -1106,7 +1211,7 @@ exports.redrawSplomSelection = (data, splom, sampleData, selectedRows, highlight
 
     for (let i = 0; i < visibleCells.length; i++) {
         if (token !== splomRedrawToken) return
-        redrawOneSplomCell(visibleCells[i], data, splom, selectedIdSet, viewVisitcount, maxSplomAcc, drawOptions)
+        redrawOneSplomCell(visibleCells[i], data, splom, effectiveIdSet, viewVisitcount, maxSplomAcc, drawOptions)
     }
 
     if (viewVisitcount) {
@@ -1118,7 +1223,7 @@ exports.redrawSplomSelection = (data, splom, sampleData, selectedRows, highlight
 
     if (!offscreenCells.length) return
 
-    redrawSplomCellsInChunks(offscreenCells, data, splom, selectedIdSet, viewVisitcount, maxSplomAcc, drawOptions, 0, token, null)
+    redrawSplomCellsInChunks(offscreenCells, data, splom, effectiveIdSet, viewVisitcount, maxSplomAcc, drawOptions, 0, token, null)
 }
 
 exports.updateSplomSelectionOverlay = exports.redrawSplomSelection
@@ -1143,6 +1248,52 @@ exports.getSplomRowScopeKey = splomCache.getRowScopeKey
 exports.invalidateSplomCaches = splomCache.invalidateSplomCaches
 exports.invalidateSplomRowsCache = splomCache.invalidateSplomRowsCache
 exports.invalidateSplomDomainCache = splomCache.invalidateSplomDomainCache
+
+/**
+ * Fast path: same dimension grid, only row groups / labels changed (triangle swap).
+ * Updates data pointers + souche attrs and returns true so callers can redraw cells
+ * without wiping the SPLOM DOM.
+ */
+exports.tryUpdateSplomCompareDatasets = (container, primaryData, comparisonData, meta) => {
+    if (!container || container.empty()) return false
+    const compareMode = !!container.property("__splomCompareMode")
+    if (!compareMode) return false
+    const dims = container.property("__splomDimensions")
+    if (!dims || !dims.length) return false
+
+    const info = meta || {}
+    container.property("__splomOverviewData", primaryData || [])
+    container.property("__splomComparisonData", comparisonData || [])
+    if (info.domainMap) container.property("__splomDomainMap", info.domainMap)
+    if (info.primaryLabel) container.property("__splomPrimaryLabel", info.primaryLabel)
+    if (info.comparisonLabel) container.property("__splomComparisonLabel", info.comparisonLabel)
+
+    const lowerLabel = info.lowerSouche || info.primaryLabel || "Lower"
+    const upperLabel = info.upperSouche || info.comparisonLabel || "Upper"
+
+    container.selectAll(".splom-cell").each(function () {
+        const tri = this.getAttribute("data-triangle-source")
+        if (tri === "upper") {
+            this.setAttribute("data-souche", upperLabel)
+            this.setAttribute("data-visit-souche-key", String(upperLabel))
+        } else if (tri === "lower") {
+            this.setAttribute("data-souche", lowerLabel)
+            this.setAttribute("data-visit-souche-key", String(lowerLabel))
+        }
+    })
+
+    const legend = container.select(".splom-compare-legend")
+    if (!legend.empty()) {
+        legend.select(".splom-compare-legend-lower").text("\u25CF Lower: " + lowerLabel)
+        legend.select(".splom-compare-legend-upper").text("\u2715 Upper: " + upperLabel)
+    }
+
+    // Force pending paint so visible cells refresh with new rows.
+    container.selectAll(".splom-cell")
+        .attr("data-splom-pending", "1")
+        .attr("data-splom-rendered", "0")
+    return true
+}
 exports.bumpSplomDatasetVersion = splomCache.bumpDatasetVersion
 exports.getDimensionSetCacheKey = splomCache.getDimensionSetCacheKey
 exports.getCachedDimensionSet = splomCache.getCachedDimensionSet

@@ -15,6 +15,8 @@ const datasetStore = require('./datasetStore.js')
 const dimensionFamilies = require('./dimensionFamilies.js')
 const comparisonDataset = require('./comparisonDataset.js')
 const datasetColumns = require('./datasetColumns.js')
+const columnMetadata = require('./columnMetadata.js')
+const distributionCharts = require('./distributionCharts.js')
 const soucheComparison = require('./soucheComparison.js')
 const soucheComparisonStorage = require('./soucheComparisonStorage.js')
 
@@ -35,46 +37,102 @@ window.$ = $;
 
 const PERF_PREFIX = "[Perf]"
 
+function nowMs() {
+    return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()
+}
+
+function ensurePerfStore() {
+    if (typeof window === "undefined") return null
+    if (!window.__vispromPerfMarks) window.__vispromPerfMarks = []
+    return window.__vispromPerfMarks
+}
+
+function recordPerfMark(label, ms, meta) {
+    const store = ensurePerfStore()
+    if (!store) return
+    store.push({
+        label: label,
+        ms: Math.round(ms * 10) / 10,
+        at: Date.now(),
+        meta: meta || null
+    })
+}
+
 function isPerfLoggingEnabled() {
     if (typeof window !== "undefined" && window.__vispromPerfLogging === false) return false
     return true
 }
 
 function perfStart(label) {
-    if (!isPerfLoggingEnabled()) return function () {}
+    const t0 = nowMs()
     const fullLabel = label.indexOf(PERF_PREFIX) === 0 ? label : PERF_PREFIX + " " + label
-    console.time(fullLabel)
-    return function () {
-        console.timeEnd(fullLabel)
+    if (isPerfLoggingEnabled()) console.time(fullLabel)
+    return function (meta) {
+        const elapsed = nowMs() - t0
+        recordPerfMark(label, elapsed, meta)
+        if (isPerfLoggingEnabled()) console.timeEnd(fullLabel)
+        return elapsed
     }
 }
 
 function timeBlock(label, fn) {
-    if (!isPerfLoggingEnabled()) return fn()
+    const t0 = nowMs()
     const fullLabel = label.indexOf(PERF_PREFIX) === 0 ? label : PERF_PREFIX + " " + label
-    console.time(fullLabel)
+    if (isPerfLoggingEnabled()) console.time(fullLabel)
     try {
         return fn()
     } finally {
-        console.timeEnd(fullLabel)
+        const elapsed = nowMs() - t0
+        recordPerfMark(label, elapsed)
+        if (isPerfLoggingEnabled()) console.timeEnd(fullLabel)
     }
 }
 
 function timeBlockIfSlow(label, fn, thresholdMs) {
-    if (!isPerfLoggingEnabled()) return fn()
     const limit = thresholdMs == null ? 8 : thresholdMs
-    const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()
+    const t0 = nowMs()
     const result = fn()
-    const elapsed = ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - t0
-    if (elapsed >= limit) {
+    const elapsed = nowMs() - t0
+    recordPerfMark(label, elapsed)
+    if (isPerfLoggingEnabled() && elapsed >= limit) {
         console.log(PERF_PREFIX + " " + label + " (slow)", elapsed.toFixed(1) + "ms")
     }
     return result
 }
 
+function summarizePerfMarks(marks) {
+    const list = marks || (typeof window !== "undefined" ? window.__vispromPerfMarks : null) || []
+    const byLabel = {}
+    list.forEach(function (m) {
+        if (!byLabel[m.label]) byLabel[m.label] = []
+        byLabel[m.label].push(m.ms)
+    })
+    const summary = {}
+    Object.keys(byLabel).forEach(function (label) {
+        const vals = byLabel[label].slice().sort(function (a, b) { return a - b })
+        const sum = vals.reduce(function (a, b) { return a + b }, 0)
+        summary[label] = {
+            count: vals.length,
+            totalMs: Math.round(sum * 10) / 10,
+            lastMs: vals[vals.length - 1],
+            maxMs: vals[vals.length - 1],
+            minMs: vals[0],
+            avgMs: Math.round((sum / vals.length) * 10) / 10
+        }
+    })
+    return summary
+}
+
 if (typeof window !== "undefined") {
-    window.__vispromPerfLogging = window.__vispromPerfLogging !== false
-    console.log(PERF_PREFIX + " instrumentation active (set window.__vispromPerfLogging = false to disable)")
+    if (window.__vispromPerfLogging == null) window.__vispromPerfLogging = false
+    window.__vispromPerfMarks = window.__vispromPerfMarks || []
+    window.__vispromGetPerfSummary = function () {
+        return summarizePerfMarks(window.__vispromPerfMarks)
+    }
+    window.__vispromClearPerfMarks = function () {
+        window.__vispromPerfMarks = []
+        return true
+    }
 }
 
 // ==========================
@@ -196,6 +254,14 @@ let yeastMode = "overlay"
 let soucheTriangleCompareActive = false
 let triangleLowerYeast = null
 let triangleUpperYeast = null
+let categoricalColumns = []
+// "category" = filter/compare by the selected categorical variable, "full" = whole dataset.
+let splomViewMode = "category"
+let savedCategoryViewState = null
+const SPLOM_VIEW_MODE_OPTIONS = [
+    { value: "full", label: "Full Dataset" },
+    { value: "category", label: "Category / Comparison" }
+]
 let mainChartYeastView = "overlay"
 // "Main Chart Settings" controls for user-tunable UI (selection layers + density contours).
 let mainChartSettingsSelectionsTarget = 10
@@ -203,12 +269,17 @@ let mainChartSettingsContourLevels = 8
 let savedYeastPairComparisons = []
 let openedSoucheComparisons = []
 let selectionTarget = "active"
+let lastClickedSplomTriangle = null
 let selectionMemoryByContext = {}
 let splomClickTimer = null
 let pendingSplomClickRevert = null
 let splomCellClickState = {}
 let setYeastPanelStatus = null
 let selectedColumns = []
+// Applied SPLOM open set (source of truth for visible dims). Null = no filter / family chips.
+// Kept separate from selectedColumns so creating a family or toggling checkboxes
+// does not drop custom dims that are already open.
+let appliedSplomDimensions = null
 let currentDimensionFamilies = {}
 let expandedFamilies = new Set()
 let familyMapWarningsEl = null
@@ -216,7 +287,6 @@ let setFamilyPanelStatus = null
 let setSplomColumnFilterStatus = null
 let tableDimCheckboxDelegationBound = false
 let customDimensionExpressions = []
-///////////////
 let mainviewSvg     = null
 let mvX             = null
 let mvY             = null
@@ -234,8 +304,8 @@ let mean        = {}
 
 let historySvg3 = null
 let historySvg2 = null
+let historyIconsRoot = null
 
-///////
 //Logging
 let userId = "anonymous"
 let maxSplomAcc   = { v : 1}
@@ -266,6 +336,8 @@ let onlineLogActive = true
 let mainChartMode = "original"
 let mainChartMvX = null
 let mainChartMvY = null
+/** When set, Main Chart shows a 1D compare distribution (diagonal open) — no selection. */
+let mainChartDistributionDim = null
 
 let comparisonDatasetRows = null
 let primaryDatasetLabel = "Dataset 1"
@@ -292,7 +364,6 @@ const SPLOM_MAX_ZOOM = 4
 const SPLOM_ZOOM_SPEED = 0.002
 const SPLOM_FOCUS_BUFFER_PX = 72
 
-////////////////
 //Main container
 let c = d3.select(".grid-container")
 // 
@@ -300,20 +371,9 @@ let c = d3.select(".grid-container")
 
 function isPointInVisibleSplomSelection(d) {
     if (!d || !selections) return false
-    if (!selectionMembershipIndexDirty) {
-        const rowId = d.__rowId != null ? d.__rowId : d.id
-        const memberships = getSelectionMembershipsFast(rowId, getSoucheKeyForPoint(d))
-        for (let i = 0; i < memberships.length; i++) {
-            const layer = memberships[i].layer
-            if (layer && layer.visibility !== false) return true
-        }
-        return false
-    }
-    for (let i = 0; i < selections.length; i++) {
-        const layer = selections[i]
-        if (layer && layer.cname !== "Blue" && layer.visibility !== false && layer.content.has(d)) {
-            return true
-        }
+    const layers = getColoredLayersForPoint(d)
+    for (let i = 0; i < layers.length; i++) {
+        if (layers[i].visibility !== false) return true
     }
     return false
 }
@@ -326,20 +386,11 @@ function getActiveSelectionLayer() {
 function isPointInActiveSelection(d) {
     const layer = getActiveSelectionLayer()
     if (!layer || !d) return false
-    return layer.content.has(d)
+    return layerOwnsPoint(layer, d)
 }
 
 function isPointInAnyColoredSelection(d) {
-    if (!d || !selections) return false
-    if (!selectionMembershipIndexDirty) {
-        const rowId = d.__rowId != null ? d.__rowId : d.id
-        return getSelectionMembershipsFast(rowId, getSoucheKeyForPoint(d)).length > 0
-    }
-    for (let i = 1; i < selections.length; i++) {
-        const layer = selections[i]
-        if (layer && layer.content.has(d)) return true
-    }
-    return false
+    return getColoredLayersForPoint(d).length > 0
 }
 
 function findSelectionLayerByCname(cname) {
@@ -576,13 +627,53 @@ function getSoucheKeyForSelectionContext(ctxKey) {
     return currentSouche || "__ALL__"
 }
 
+function normalizeSelectionRowId(rowId) {
+    if (rowId == null || rowId === "") return null
+    if (typeof rowId === "number" && Number.isFinite(rowId)) return rowId
+    const asStr = String(rowId).trim()
+    if (!asStr) return null
+    const asNum = Number(asStr)
+    if (Number.isFinite(asNum) && String(asNum) === asStr) return asNum
+    return asStr
+}
+
+function rowIdEquals(a, b) {
+    const na = normalizeSelectionRowId(a)
+    const nb = normalizeSelectionRowId(b)
+    if (na == null || nb == null) return false
+    return na === nb || String(na) === String(nb)
+}
+
+function addNormalizedRowIdToSet(set, rowId) {
+    const n = normalizeSelectionRowId(rowId)
+    if (n == null || !set) return
+    set.add(n)
+}
+
+function selectionIdSetHas(set, rowId) {
+    if (!set) return false
+    const n = normalizeSelectionRowId(rowId)
+    if (n == null) return false
+    return set.has(n) || set.has(String(n)) || (typeof n === "number" && set.has(n))
+}
+
+function resolveExportRowById(rowId) {
+    const n = normalizeSelectionRowId(rowId)
+    if (n == null || !rowById) return null
+    return rowById.get(n) || rowById.get(String(n)) || rowById.get(Number(n)) || null
+}
+
 function addRowIdToLayerSouche(layer, rowId, soucheKey) {
     if (!layer || rowId == null || layer.cname === "Blue") return
     ensureSelectionLayerMeta(layer)
+    const normalizedId = normalizeSelectionRowId(rowId)
+    if (normalizedId == null) return
     if (!layer.selectionsBySouche[soucheKey]) layer.selectionsBySouche[soucheKey] = []
-    if (layer.selectionsBySouche[soucheKey].indexOf(rowId) === -1) {
-        layer.selectionsBySouche[soucheKey].push(rowId)
+    const bucket = layer.selectionsBySouche[soucheKey]
+    for (let i = 0; i < bucket.length; i++) {
+        if (rowIdEquals(bucket[i], normalizedId)) return
     }
+    bucket.push(normalizedId)
     layer.updatedAt = new Date().toISOString()
 }
 
@@ -591,9 +682,9 @@ function removeRowIdFromLayerSouche(layer, rowId, soucheKey) {
     ensureSelectionLayerMeta(layer)
     const bucket = layer.selectionsBySouche[soucheKey]
     if (!bucket) return
-    const idx = bucket.indexOf(rowId)
-    if (idx !== -1) bucket.splice(idx, 1)
-    if (!bucket.length) delete layer.selectionsBySouche[soucheKey]
+    const next = bucket.filter(function (id) { return !rowIdEquals(id, rowId) })
+    if (next.length) layer.selectionsBySouche[soucheKey] = next
+    else delete layer.selectionsBySouche[soucheKey]
     layer.updatedAt = new Date().toISOString()
 }
 
@@ -661,6 +752,7 @@ function buildSoucheRowsIndex() {
 }
 
 function getSplomDisplayRowsCacheKey() {
+    if (splomViewMode === "full") return "full"
     if (isSoucheCompareModeActive()) {
         return "compare|" + triangleLowerYeast + "|" + triangleUpperYeast
     }
@@ -697,6 +789,34 @@ function getSplomDisplayRows() {
     return rows
 }
 
+/** Rows that must share selection colors across table, main chart, and SPLOM. */
+function getSelectionSyncRows() {
+    if (!datum || !datum.length) return []
+    if (splomViewMode === "full") return datum
+    const seen = new Set()
+    const out = []
+    function addRows(rows) {
+        if (!rows) return
+        for (let i = 0; i < rows.length; i++) {
+            const d = rows[i]
+            if (!d) continue
+            const key = d.__rowId != null ? d.__rowId : d.id
+            if (key != null) {
+                if (seen.has(key)) continue
+                seen.add(key)
+            } else if (seen.has(d)) {
+                continue
+            } else {
+                seen.add(d)
+            }
+            out.push(d)
+        }
+    }
+    addRows(getSplomDisplayRows())
+    addRows(getMainChartPrimaryData())
+    return out.length ? out : datum
+}
+
 function clearColoredSelectionContentOnly() {
     for (let i = 1; i < selections.length; i++) {
         const layer = selections[i]
@@ -713,21 +833,26 @@ function clearColoredSelectionContentOnly() {
 }
 
 function resolveDatumByRowId(rowId) {
-    if (rowId == null) return null
-    return rowById.get(rowId) || null
+    return resolveExportRowById(rowId)
 }
 
 function rebuildColoredSelectionContentFromSoucheKeys(options) {
     const opts = options || {}
     if (!datum || !selections) return
-    syncCurrentContextToLayerSouche()
+    if (!opts.skipSyncFromContent) {
+        syncCurrentContextToLayerSouche()
+    }
     const displayRows = getSplomDisplayRows()
     const displayRowIds = new Set()
     for (let i = 0; i < displayRows.length; i++) {
         const d = displayRows[i]
         if (!d) continue
         const rid = d.__rowId != null ? d.__rowId : d.id
-        if (rid != null) displayRowIds.add(rid)
+        if (rid != null) {
+            displayRowIds.add(rid)
+            displayRowIds.add(String(rid))
+            displayRowIds.add(Number(rid))
+        }
     }
 
     clearColoredSelectionContentOnly()
@@ -741,8 +866,8 @@ function rebuildColoredSelectionContentFromSoucheKeys(options) {
         for (let sk = 0; sk < soucheKeys.length; sk++) {
             const ids = buckets[soucheKeys[sk]] || []
             for (let j = 0; j < ids.length; j++) {
-                if (!displayRowIds.has(ids[j])) continue
-                const d = rowById.get(ids[j])
+                if (!displayRowIds.has(ids[j]) && !displayRowIds.has(String(ids[j])) && !displayRowIds.has(Number(ids[j]))) continue
+                const d = rowById.get(ids[j]) || rowById.get(Number(ids[j])) || rowById.get(String(ids[j]))
                 if (d) layer.content.add(d)
             }
         }
@@ -770,25 +895,33 @@ function isRowIdInLayer(rowId, layer, soucheKey) {
     ensureSelectionLayerMeta(layer)
     if (soucheKey) {
         const ids = layer.selectionsBySouche[soucheKey] || []
-        if (ids.indexOf(rowId) !== -1) return true
+        for (let i = 0; i < ids.length; i++) {
+            if (rowIdEquals(ids[i], rowId)) return true
+        }
     } else {
         const buckets = layer.selectionsBySouche || {}
-        for (const key of Object.keys(buckets)) {
-            if ((buckets[key] || []).indexOf(rowId) !== -1) return true
+        const keys = Object.keys(buckets)
+        for (let k = 0; k < keys.length; k++) {
+            const ids = buckets[keys[k]] || []
+            for (let i = 0; i < ids.length; i++) {
+                if (rowIdEquals(ids[i], rowId)) return true
+            }
         }
     }
     if (layer.content) {
         for (const d of layer.content) {
             if (!d) continue
             const rid = d.__rowId != null ? d.__rowId : d.id
-            if (rid === rowId) return true
+            if (rowIdEquals(rid, rowId)) return true
         }
     }
     return false
 }
 
 function getRowIdsForSelectionLayer(layerId, options) {
-    const layer = findSelectionLayerById(layerId)
+    const layer = typeof layerId === "object" && layerId
+        ? (ensureSelectionLayerMeta(layerId), layerId)
+        : findSelectionLayerById(layerId)
     if (!layer) return new Set()
     ensureSelectionLayerMeta(layer)
     const opts = options || {}
@@ -796,16 +929,16 @@ function getRowIdsForSelectionLayer(layerId, options) {
     Object.entries(layer.selectionsBySouche || {}).forEach(function (entry) {
         const soucheKey = entry[0]
         const rowIds = entry[1] || []
-        if (opts.souche && soucheKey !== opts.souche) return
-        rowIds.forEach(function (id) { ids.add(id) })
+        if (opts.souche && String(soucheKey) !== String(opts.souche)) return
+        rowIds.forEach(function (id) { addNormalizedRowIdToSet(ids, id) })
     })
     if (layer.content) {
         layer.content.forEach(function (d) {
             if (!d) return
             const rid = d.__rowId != null ? d.__rowId : d.id
             if (rid == null) return
-            if (opts.souche && getSoucheKeyForPoint(d) !== opts.souche) return
-            ids.add(rid)
+            if (opts.souche && String(getSoucheKeyForPoint(d)) !== String(opts.souche)) return
+            addNormalizedRowIdToSet(ids, rid)
         })
     }
     return ids
@@ -816,23 +949,53 @@ function getIntersectionRowIdsForSelectionLayers(layerIds, options) {
         console.warn("[Intersection] Need at least two selection layers")
         return new Set()
     }
-    const sets = layerIds.map(function (layerId) {
-        return getRowIdsForSelectionLayer(layerId, options || {})
+    const layers = layerIds.map(function (id) {
+        return typeof id === "object" && id ? id : findSelectionLayerById(id)
+    }).filter(Boolean)
+    if (layers.length < 2) return new Set()
+
+    const opts = options || {}
+    const sets = layers.map(function (layer) {
+        return getRowIdsForSelectionLayer(layer.id || layer.cname, opts)
     })
-    if (!sets.length) return new Set()
-    const firstSet = sets[0]
-    const restSets = sets.slice(1)
-    const intersection = new Set(
-        Array.from(firstSet).filter(function (rowId) {
-            return restSets.every(function (set) { return set.has(rowId) })
+
+    let smallestIdx = 0
+    for (let i = 1; i < sets.length; i++) {
+        if (sets[i].size < sets[smallestIdx].size) smallestIdx = i
+    }
+    const intersection = new Set()
+    sets[smallestIdx].forEach(function (rowId) {
+        const inAll = sets.every(function (set) { return selectionIdSetHas(set, rowId) })
+        if (inAll) addNormalizedRowIdToSet(intersection, rowId)
+    })
+
+    // Fallback: membership by live layer content / ownership (matches visual overlaps).
+    if (!intersection.size) {
+        const candidateRows = []
+        layers.forEach(function (layer) {
+            if (!layer.content) return
+            layer.content.forEach(function (d) {
+                if (d) candidateRows.push(d)
+            })
         })
-    )
-    console.log("[Intersection] computed", {
-        layerIds: layerIds,
-        souche: (options && options.souche) || "ALL",
-        counts: sets.map(function (set) { return set.size }),
-        intersectionCount: intersection.size
-    })
+        const seen = new Set()
+        for (let i = 0; i < candidateRows.length; i++) {
+            const d = candidateRows[i]
+            const rid = normalizeSelectionRowId(d.__rowId != null ? d.__rowId : d.id)
+            if (rid == null || seen.has(rid) || seen.has(String(rid))) continue
+            seen.add(rid)
+            if (opts.souche && String(getSoucheKeyForPoint(d)) !== String(opts.souche)) continue
+            let inAllLayers = true
+            for (let li = 0; li < layers.length; li++) {
+                if (!layerOwnsPoint(layers[li], d) && !isRowIdInLayer(rid, layers[li], opts.souche || null)) {
+                    inAllLayers = false
+                    break
+                }
+            }
+            if (inAllLayers) addNormalizedRowIdToSet(intersection, rid)
+        }
+    }
+
     return intersection
 }
 
@@ -905,13 +1068,16 @@ function buildExportRowsFromRowIds(rowIds, metadata) {
     const rows = []
     const excludedExportColumns = new Set(["visibility", "color", "__rowId", "id"])
     rowIds.forEach(function (rowId) {
-        const row = rowById.get(rowId)
+        const row = resolveExportRowById(rowId)
         if (!row) {
             console.warn("[CSV export] Missing row for rowId", rowId)
             return
         }
         const rowSouche = yeastColumn ? row[yeastColumn] : (meta.souche || "__ALL__")
-        const memberships = getSelectionMembershipsForRow(rowId, rowSouche)
+        const memberships = getSelectionMembershipsForRow(
+            normalizeSelectionRowId(row.__rowId != null ? row.__rowId : row.id),
+            rowSouche
+        )
         const exportRow = {}
         const selectionNames = memberships.map(function (m) { return m.label || "" }).join("; ")
         const selectionAnnotations = memberships.map(function (m) { return m.annotation || "" }).join("; ")
@@ -931,6 +1097,9 @@ function buildExportRowsFromRowIds(rowIds, metadata) {
             allColumns.forEach(function (col) {
                 if (excludedExportColumns.has(col)) return
                 exportRow[col] = row[col]
+                if (columnMetadata.isCategoricalDimension(col)) {
+                    exportRow[col + "_label"] = columnMetadata.getCategoryLabel(col, row[col])
+                }
             })
         } else {
             Object.keys(row).forEach(function (key) {
@@ -1018,6 +1187,7 @@ function downloadSelectionIntersectionCsv(layerIds, options) {
         alert("Choose at least two selections to export an intersection.")
         return
     }
+    syncCurrentContextToLayerSouche()
     const layers = layerIds.map(findSelectionLayerById).filter(Boolean)
     const opts = options || {}
     const souche = opts.currentSoucheOnly
@@ -1076,6 +1246,185 @@ function computePairwiseSelectionIntersections(options) {
 function layerChipColor(layer) {
     if (!layer || !layer.color || !layer.color.string) return VIS_CONFIG.point.fallbackChipColor
     return layer.color.string.substr(0, 7)
+}
+
+function normalizeSelectionPickerHex(value) {
+    const raw = String(value || "").trim()
+    if (!raw) return null
+    if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw
+    if (/^#[0-9a-fA-F]{8}$/.test(raw)) return raw.substr(0, 7)
+    if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+        const c = raw.substr(1).split("")
+        return "#" + c[0] + c[0] + c[1] + c[1] + c[2] + c[2]
+    }
+    return null
+}
+
+function applySelectionLayerColor(layer, pickerValue) {
+    if (!layer || !layer.color) return false
+    const hex = normalizeSelectionPickerHex(pickerValue)
+    if (!hex) return false
+    layer.color.string = hex
+    try {
+        layer.color.array = hexToRgbA(hex, 1)
+    } catch (e) {
+        return false
+    }
+    return true
+}
+
+let liveSelectionColorPickerState = null
+
+function updateSelectionColorChip(inputEl, hex) {
+    if (!inputEl || !inputEl.parentNode) return
+    const chip = inputEl.parentNode.querySelector(".selection-chip")
+    if (chip) chip.style.background = (hex || "").substr(0, 7)
+}
+
+function stopLiveSelectionColorPicker() {
+    if (!liveSelectionColorPickerState) return
+    if (liveSelectionColorPickerState.rafId) {
+        cancelAnimationFrame(liveSelectionColorPickerState.rafId)
+    }
+    liveSelectionColorPickerState = null
+}
+
+function syncSelectionVisualState(rowScope) {
+    const rows = rowScope || getSelectionSyncRows()
+    for (let i = 0; i < rows.length; i++) {
+        const d = rows[i]
+        if (!d) continue
+        syncPointColorMembership(d)
+        if (isPointInAnyColoredSelection(d)) {
+            recomputePointDisplayLayer(d)
+        } else {
+            delete d.__displayLayerCname
+        }
+    }
+    rebuildSelectionMembershipIndex()
+}
+
+let mainChartSelectionRepaintToken = 0
+
+function repaintMainChartSelectionState(svg, data) {
+    const chartSvg = svg || mainviewSvg
+    if (!chartSvg || chartSvg.empty() || !datum) return
+    const chartData = data || getMainChartPrimaryData()
+    syncSelectionVisualState(getSelectionSyncRows())
+    scaterplot.updatePointsAfterSelection(chartData, chartSvg)
+}
+
+function chooseMainChartDims(w, h, data, xDim, yDim, svg, zoom, overlayOptions) {
+    const chartSvg = svg || mainviewSvg
+    const chartData = data || getMainChartPrimaryData()
+    if (!chartSvg || chartSvg.empty() || !xDim || !yDim) return
+    syncSelectionVisualState(getSelectionSyncRows())
+    scaterplot.chooseDims(w, h, chartData, xDim, yDim, chartSvg, zoom, overlayOptions)
+    scaterplot.updatePointsAfterSelection(chartData, chartSvg)
+}
+
+function scheduleMainChartSelectionRepaint() {
+    const token = ++mainChartSelectionRepaintToken
+    requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+            if (token !== mainChartSelectionRepaintToken) return
+            repaintMainChartSelectionState()
+        })
+    })
+}
+
+function refreshAfterSelectionLayerColorEdit(options) {
+    const opts = options || {}
+    if (splom && !splom.empty()) {
+        syncSplomHighlightColors()
+    }
+    const chartData = getMainChartPrimaryData()
+    if (mainviewSvg && chartData) {
+        scaterplot.updatePointsAfterSelection(chartData, mainviewSvg)
+    }
+    refreshSplomAfterSelection(null, true)
+    refreshTableSelectionColorSwatches()
+    scheduleActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
+    if (!opts.full) return
+    refreshTableView()
+    scheduleSelectionPanelLightRefresh()
+    renderIntersectionPicker()
+    if (typeof updateViewHistory === "function" && historyIconsRoot) {
+        updateViewHistory(viewHistory, { forceRebuild: true })
+    }
+    if (typeof updateFavorites === "function" && favorites) {
+        updateFavorites(savedFavs)
+    }
+    syncOpenSoucheComparisonSelections()
+}
+
+function refreshSelectionColorLivePreview() {
+    refreshAfterSelectionLayerColorEdit({ full: false })
+}
+
+function refreshTableSelectionColorSwatches() {
+    if (!tableView_table || tableView_table.empty() || !datum) return
+    tableView_table.select("tbody").selectAll("tr").each(function (row) {
+        if (!row) return
+        const cell = d3.select(this).select("td:last-child")
+        if (cell.empty()) return
+        const swatches = getColorSwatchesForTableRow(row, row.color)
+        cell.select(".selection-color-swatches").selectAll(".selection-color-swatch")
+            .data(swatches)
+            .join("span")
+            .attr("class", "selection-color-swatch")
+            .style("display", "inline-block")
+            .style("width", "10px")
+            .style("height", "10px")
+            .style("border-radius", "2px")
+            .style("border", "1px solid " + VIS_CONFIG.point.chipBorder)
+            .style("margin-right", "2px")
+            .style("vertical-align", "middle")
+            .style("background", function (fill) { return fill })
+    })
+}
+
+function tickLiveSelectionColorPicker() {
+    if (!liveSelectionColorPickerState) return
+    const st = liveSelectionColorPickerState
+    const input = st.input
+    if (!input || !document.body.contains(input)) {
+        stopLiveSelectionColorPicker()
+        return
+    }
+    const hex = input.value
+    if (hex && hex !== st.lastHex) {
+        st.lastHex = hex
+        if (applySelectionLayerColor(st.layer, hex)) {
+            updateSelectionColorChip(input, hex)
+            refreshSelectionColorLivePreview()
+        }
+    }
+    st.rafId = requestAnimationFrame(tickLiveSelectionColorPicker)
+}
+
+function startLiveSelectionColorPicker(layer, inputEl) {
+    stopLiveSelectionColorPicker()
+    liveSelectionColorPickerState = {
+        layer: layer,
+        input: inputEl,
+        lastHex: inputEl.value,
+        rafId: null
+    }
+    tickLiveSelectionColorPicker()
+}
+
+function applySelectionLayerColorFromInput(layer, inputEl, options) {
+    const opts = options || {}
+    const inputValue = inputEl && inputEl.value
+    if (!applySelectionLayerColor(layer, inputValue)) return false
+    updateSelectionColorChip(inputEl, layerChipColor(layer))
+    refreshAfterSelectionLayerColorEdit({ full: !!opts.final })
+    return true
+}
+
+function refreshViewsAfterSelectionLayerColorChange() {
+    refreshAfterSelectionLayerColorEdit({ full: true })
 }
 
 function getColorSwatchesForTableRow(row, fallbackColorSet) {
@@ -1370,14 +1719,22 @@ function renderSelectionLayerTable() {
                 .attr("type", "color")
                 .attr("class", "selection-color-input")
                 .attr("value", layerChipColor(d))
+                .on("focus", function () {
+                    startLiveSelectionColorPicker(d, this)
+                })
                 .on("input", function () {
-                    const inputValue = d3.select(this).property("value")
-                    d.color.string = inputValue.concat("80")
-                    d.color.array = hexToRgbA(inputValue, 1)
-                    d3.select(this.parentNode).select(".selection-chip")
-                        .style("background", inputValue)
-                    invalidateSelectionMembershipIndex()
-                    refreshSplomAfterSelection()
+                    applySelectionLayerColorFromInput(d, this, { live: true })
+                    if (!liveSelectionColorPickerState) {
+                        startLiveSelectionColorPicker(d, this)
+                    }
+                })
+                .on("change", function () {
+                    stopLiveSelectionColorPicker()
+                    applySelectionLayerColorFromInput(d, this, { final: true })
+                })
+                .on("blur", function () {
+                    stopLiveSelectionColorPicker()
+                    applySelectionLayerColorFromInput(d, this, { final: true })
                 })
                 .on("click", function (evt) {
                     if (evt && evt.stopPropagation) evt.stopPropagation()
@@ -1599,6 +1956,9 @@ function updateIntersectionPreview() {
             return
         }
 
+        // Keep souche ID maps in sync with live content before counting overlaps.
+        syncCurrentContextToLayerSouche()
+
         const layers = selectedIntersectionLayerIds
             .map(findSelectionLayerById)
             .filter(Boolean)
@@ -1617,6 +1977,7 @@ function renderNonZeroPairwiseOverlapSummary() {
         if (container.empty()) return
 
         container.html("")
+        syncCurrentContextToLayerSouche()
 
         const groups = computePairwiseSelectionIntersections().filter(function (group) {
             return group.count > 0
@@ -1684,17 +2045,12 @@ function renderSelectionChipsForRow(row) {
 
 function getColoredLayersForPoint(d) {
     if (!d || !selections) return []
-    if (!selectionMembershipIndexDirty) {
-        const rowId = d.__rowId != null ? d.__rowId : d.id
-        const memberships = getSelectionMembershipsFast(rowId, getSoucheKeyForPoint(d))
-        if (memberships.length) {
-            return memberships.map(function (m) { return m.layer }).filter(Boolean)
-        }
-    }
     const layers = []
     for (let i = 1; i < selections.length; i++) {
         const layer = selections[i]
-        if (layer && layer.content && layer.content.has(d)) layers.push(layer)
+        if (layer && layer.cname !== "Blue" && layerOwnsPoint(layer, d)) {
+            layers.push(layer)
+        }
     }
     return layers
 }
@@ -1733,7 +2089,7 @@ function recomputePointDisplayLayer(d) {
         return null
     }
     const preferred = findSelectionLayerByCname(d.__displayLayerCname)
-    if (preferred && preferred.content.has(d)) {
+    if (preferred && layerOwnsPoint(preferred, d)) {
         return preferred
     }
     let best = layers[0]
@@ -1746,6 +2102,62 @@ function recomputePointDisplayLayer(d) {
     return best
 }
 
+function getCanonicalSelectionRow(d) {
+    if (!d) return null
+    const rowId = d.__rowId != null ? d.__rowId : d.id
+    if (rowId != null) {
+        const canon = resolveDatumByRowId(rowId)
+        if (canon) return canon
+    }
+    return d
+}
+
+function layerOwnsPoint(layer, d) {
+    if (!layer || !d) return false
+    if (layer.content && layer.content.has(d)) return true
+    const rowId = d.__rowId != null ? d.__rowId : d.id
+    if (rowId == null) return false
+    if (layer.content) {
+        for (const p of layer.content) {
+            if (!p) continue
+            const pid = p.__rowId != null ? p.__rowId : p.id
+            if (pid === rowId) return true
+        }
+    }
+    return isRowIdInLayer(rowId, layer, null)
+}
+
+function removePointFromOtherSelectionLayers(keepLayer, d) {
+    if (!d || !selections) return
+    const rowId = d.__rowId != null ? d.__rowId : d.id
+    for (let i = 1; i < selections.length; i++) {
+        const layer = selections[i]
+        if (!layer || layer === keepLayer || layer.cname === "Blue") continue
+        if (layer.content) {
+            const toRemove = []
+            layer.content.forEach(function (p) {
+                if (!p) return
+                if (p === d) {
+                    toRemove.push(p)
+                    return
+                }
+                const pid = p.__rowId != null ? p.__rowId : p.id
+                if (rowId != null && pid === rowId) toRemove.push(p)
+            })
+            for (let j = 0; j < toRemove.length; j++) {
+                removePointFromSelectionLayer(layer, toRemove[j])
+            }
+        }
+        if (rowId != null) {
+            const buckets = layer.selectionsBySouche || {}
+            Object.keys(buckets).forEach(function (sk) {
+                removeRowIdFromLayerSouche(layer, rowId, sk)
+            })
+        }
+    }
+    invalidateSelectionMembershipIndex()
+}
+
 function addPointToSelectionLayer(layer, d) {
     if (!layer || !d || layer.cname === "Blue") return
     layer.content.add(d)
@@ -1756,11 +2168,36 @@ function addPointToSelectionLayer(layer, d) {
     setPointDisplayLayer(d, layer)
 }
 
+function movePointToSelectionLayer(layer, d) {
+    const row = getCanonicalSelectionRow(d)
+    if (!layer || !row || layer.cname === "Blue") return
+    removePointFromOtherSelectionLayers(layer, row)
+    addPointToSelectionLayer(layer, row)
+}
+
 function removePointFromSelectionLayer(layer, d) {
     if (!layer || !d || layer.cname === "Blue") return
-    layer.content.delete(d)
+    if (layer.content) {
+        layer.content.delete(d)
+        const rowId = d.__rowId != null ? d.__rowId : d.id
+        if (rowId != null) {
+            const extras = []
+            layer.content.forEach(function (p) {
+                if (!p) return
+                const pid = p.__rowId != null ? p.__rowId : p.id
+                if (pid === rowId) extras.push(p)
+            })
+            for (let i = 0; i < extras.length; i++) layer.content.delete(extras[i])
+        }
+    }
     const rowId = d.__rowId != null ? d.__rowId : d.id
     removeRowIdFromLayerSouche(layer, rowId, getSoucheKeyForPoint(d))
+    if (rowId != null) {
+        const buckets = layer.selectionsBySouche || {}
+        Object.keys(buckets).forEach(function (sk) {
+            removeRowIdFromLayerSouche(layer, rowId, sk)
+        })
+    }
     invalidateSelectionMembershipIndex()
     syncPointColorMembership(d)
     if (isPointInAnyColoredSelection(d)) {
@@ -1770,20 +2207,227 @@ function removePointFromSelectionLayer(layer, d) {
 
 function getPointDisplayColor(d) {
     if (!d || !selections || !selections[0]) return null
-    if (!isPointInAnyColoredSelection(d)) {
-        return selections[0].color
+    // Match the data table: colored selection layers always define point color.
+    const layers = getColoredLayersForPoint(d)
+    if (layers.length) {
+        const displayLayer = recomputePointDisplayLayer(d)
+        if (displayLayer && displayLayer.color) return displayLayer.color
+        return layers[layers.length - 1].color
     }
-    const displayLayer = recomputePointDisplayLayer(d)
-    if (displayLayer && displayLayer.color) return displayLayer.color
-    const colors = Array.from(d.color || [])
-    return colors.length ? colors[colors.length - 1] : selections[0].color
+    const activeColorBy = columnMetadata.getActiveColorBy()
+    if (activeColorBy && activeColorBy !== "selection" && columnMetadata.isCategoricalDimension(activeColorBy)) {
+        const hex = columnMetadata.getCategoryColor(activeColorBy, d[activeColorBy])
+        if (hex) {
+            return {
+                string: hex,
+                array: columnMetadata.hexToRgbaArray(hex, 0.9),
+                cname: activeColorBy + ":" + columnMetadata.getCategoryLabel(activeColorBy, d[activeColorBy])
+            }
+        }
+    }
+    return selections[0].color
 }
 
 function refreshMainChartRendering() {
     if (!mainviewSvg || !datum) return
+    if (mainChartDistributionDim) {
+        renderMainChartDistributionView()
+        return
+    }
     syncMainChartLayout()
     updateMainChartSoucheNavigator()
+    updateMainChartSelectionModeControl()
     updateMainChartPairTitle()
+}
+
+function isMainChartDistributionMode() {
+    return !!mainChartDistributionDim
+}
+
+/** Strip distribution SVG leftovers so scatter layers aren't drawn over an old KDE. */
+function teardownMainChartDistributionSvg() {
+    if (!mainviewSvg || mainviewSvg.empty()) return
+    mainviewSvg.classed("distribution-view", false)
+    mainviewSvg.selectAll(".distribution-root, .distribution-legend, .distribution-hint, .distribution-peak-label").remove()
+    // renderMainDistribution wiped scatter layers — rebuild the expected structure.
+    mainviewSvg.selectAll("*").remove()
+    mainviewSvg.property("__mainChartInited", false)
+    scaterplot.init(mainviewSvg)
+}
+
+function clearMainChartDistributionMode(options) {
+    const opts = options || {}
+    const wasActive = !!mainChartDistributionDim
+    mainChartDistributionDim = null
+    if (wasActive || (mainviewSvg && !mainviewSvg.empty() && mainviewSvg.classed("distribution-view"))) {
+        teardownMainChartDistributionSvg()
+    }
+    syncDistributionModeChrome()
+    if (splom && !splom.empty()) {
+        splom.selectAll(".splom-diag-cell").classed("splom-diag-active", false)
+    }
+    if (opts.rerender !== false && mainviewSvg && mainChartMvX && mainChartMvY) {
+        const size = getMainPlotSize()
+        chooseMainChartDims(
+            size.width,
+            size.height,
+            null,
+            mainChartMvX,
+            mainChartMvY,
+            mainviewSvg,
+            null,
+            getMainChartOverlayOptions()
+        )
+        updateMainChartBrushLayout(mainviewSvg)
+    }
+    updateMainChartPairTitle()
+    updateMainChartSoucheNavigator()
+    updateMainChartSelectionModeControl()
+}
+
+function buildCompareDistributionModel(dim) {
+    if (!dim) return null
+    const lowerRows = isSoucheCompareModeActive()
+        ? getRowsForSouche(triangleLowerYeast)
+        : getSplomPrimaryRenderRows()
+    const upperRows = isSoucheCompareModeActive()
+        ? getRowsForSouche(triangleUpperYeast)
+        : (getSplomComparisonRenderRows() || [])
+    const lowerLabel = triangleLowerYeast || "Lower"
+    const upperLabel = triangleUpperYeast || "Upper"
+    let extentHint = null
+    if (splom && !splom.empty()) {
+        const domainMap = splom.property("__splomDomainMap")
+        const entry = domainMap && domainMap[dim]
+        if (entry && Array.isArray(entry)) extentHint = entry
+        else if (entry && entry.extent) extentHint = entry.extent
+    }
+    return distributionCharts.seriesFromRowGroups([
+        { label: String(lowerLabel), rows: lowerRows || [], color: "#4b5563", lineStyle: "solid" },
+        { label: String(upperLabel), rows: upperRows || [], color: "#4b5563", lineStyle: "dotted" }
+    ], dim, extentHint)
+}
+
+function renderMainChartDistributionView() {
+    if (!mainviewSvg || !mainChartDistributionDim) return
+    const size = getMainPlotSize()
+    const model = buildCompareDistributionModel(mainChartDistributionDim)
+    // Tear down scatter brush/points layer for a clean distribution SVG.
+    mainviewSvg.selectAll(".brush").remove()
+    mainviewSvg.on(".brush", null)
+    distributionCharts.renderMainDistribution(mainviewSvg, model, mainChartDistributionDim, {
+        width: size.width,
+        height: size.height,
+        neutralCompare: true
+    })
+    syncDistributionModeChrome()
+    updateMainChartPairTitle()
+}
+
+function syncDistributionModeChrome() {
+    const dist = isMainChartDistributionMode()
+    const body = document.body
+    if (body) body.classList.toggle("visprom-distribution-mode", dist)
+
+    const modeLabel = document.querySelector(".main-chart-mode-label")
+    if (modeLabel) modeLabel.hidden = dist
+
+    const selMode = document.getElementById("mainChartSelectionModeControl")
+    if (selMode) selMode.hidden = dist || !isSoucheCompareModeActive()
+
+    const nav = document.getElementById("main-chart-souche-navigator")
+    if (nav && dist) nav.hidden = true
+
+    const time = document.getElementById("main-chart-time-controls")
+    if (time && dist) time.hidden = true
+
+    // Soft-disable selection tooling while distribution is open.
+    const panelSel = document.querySelector(".panel-selection")
+    if (panelSel) {
+        panelSel.classList.toggle("is-disabled", dist)
+        panelSel.style.opacity = dist ? "0.45" : ""
+        panelSel.style.pointerEvents = dist ? "none" : ""
+    }
+}
+
+function activateDistributionDim(dim, meta) {
+    if (!dim || !mainviewSvg) return
+    if (columnMetadata.isCategoricalDimension(dim)) {
+        // Diagonal densities are for numeric dims; keep label-only for categoricals.
+        return
+    }
+    mainChartDistributionDim = dim
+    mainChartMvX = dim
+    mainChartMvY = dim
+    mvX = dim
+    mvY = dim
+    renderMainChartDistributionView()
+    if (splom && !splom.empty()) {
+        splom.selectAll(".splom-diag-cell").classed("splom-diag-active", function () {
+            return this.getAttribute("data-diag-dim") === dim
+        })
+        splom.selectAll(".splom-cell").classed("active-splom-cell", false)
+    }
+    logProvenanceAction("open_distribution_dim", {
+        dim: dim,
+        lower: triangleLowerYeast,
+        upper: triangleUpperYeast,
+        source: (meta && meta.source) || "splom-diagonal"
+    })
+}
+
+function ensureMainChartSelectionModeControl() {
+    let select = document.getElementById("mainChartSelectionModeSelect")
+    if (!select) {
+        const host = document.querySelector(".main-chart-head-actions")
+        if (!host) return
+        const label = document.createElement("label")
+        label.id = "mainChartSelectionModeControl"
+        label.className = "main-chart-selection-mode-label"
+        label.title = "Which comparison group a lasso or brush may select. The other group stays visible as faded context."
+        label.hidden = true
+        label.appendChild(document.createTextNode("Selection mode: "))
+        select = document.createElement("select")
+        select.id = "mainChartSelectionModeSelect"
+        label.appendChild(select)
+        host.appendChild(label)
+    }
+    if (!select.__vispromBound) {
+        select.__vispromBound = true
+        select.addEventListener("change", function () {
+            setMainChartSelectionMode(select.value, { source: "main-chart-dropdown" })
+        })
+    }
+    updateMainChartSelectionModeControl()
+}
+
+function updateMainChartSelectionModeControl() {
+    const label = document.getElementById("mainChartSelectionModeControl")
+    const select = document.getElementById("mainChartSelectionModeSelect")
+    if (!label || !select) return
+    const compareActive = isSoucheCompareModeActive()
+    label.hidden = !compareActive
+    if (!compareActive) return
+
+    const lowerLabel = String(triangleLowerYeast)
+    const upperLabel = String(triangleUpperYeast)
+    const options = [
+        { value: "lower", label: lowerLabel === upperLabel ? lowerLabel + " (lower)" : lowerLabel },
+        { value: "upper", label: lowerLabel === upperLabel ? upperLabel + " (upper)" : upperLabel },
+        { value: "both", label: "Both" }
+    ]
+    const signature = options.map(function (o) { return o.label }).join("|")
+    if (select.__vispromOptionSignature !== signature) {
+        select.__vispromOptionSignature = signature
+        select.innerHTML = ""
+        options.forEach(function (opt) {
+            const el = document.createElement("option")
+            el.value = opt.value
+            el.textContent = opt.label
+            select.appendChild(el)
+        })
+    }
+    select.value = getMainChartSelectionMode()
 }
 
 function ensureMainChartModeControl() {
@@ -1849,6 +2493,21 @@ function registerMainChartSettingsApplyHook() {
             window.__vispromMainChartSettings.contourLevels = mainChartSettingsContourLevels
         }
         applyMainChartSettingsFromUI(selectionTargetColored, contourLevels)
+    }
+
+    // Re-render History/Favorites UI when the settings modal changes its sizes.
+    if (!window.__vispromHistoryFavoritesSettingsListenerBound) {
+        window.__vispromHistoryFavoritesSettingsListenerBound = true
+        window.addEventListener("visprom-main-chart-settings", function () {
+            try {
+                if (typeof updateViewHistory === "function" && historyIconsRoot) {
+                    updateViewHistory(viewHistory, { forceRebuild: true })
+                }
+                if (typeof updateFavorites === "function" && favorites) updateFavorites(savedFavs)
+            } catch (e) {
+                // non-fatal
+            }
+        })
     }
 }
 
@@ -2100,7 +2759,7 @@ function updateSplomZoomVisualScale() {
     splomRoot.style.setProperty("--splom-hover-stroke", px(4, 2.5, 9))
 }
 
-function applySplomZoom() {
+function applySplomZoom(animate) {
     const zoomLayer = getSplomZoomLayer()
     if (!zoomLayer) {
         console.warn("[SPLOM pinch zoom] Missing zoom layer")
@@ -2108,15 +2767,17 @@ function applySplomZoom() {
     }
 
     zoomLayer.style.transformOrigin = "0 0"
+    if (animate) {
+        zoomLayer.style.transition = "transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)"
+    } else {
+        zoomLayer.style.transition = "none"
+    }
     zoomLayer.style.transform = "scale(" + splomZoomScale + ")"
     zoomLayer.style.willChange = "transform"
 
     updateSplomScaledScrollArea()
     updateSplomZoomVisualScale()
 
-    console.log("[SPLOM pinch zoom applied]", {
-        splomZoomScale: splomZoomScale
-    })
 }
 
 function ensureSplomZoomLayerStructure() {
@@ -2150,14 +2811,26 @@ function ensureSplomZoomLayerStructure() {
     return { container: container, scrollContent: scrollContent, zoomLayer: zoomLayer }
 }
 
-function syncSplomZoomBaseFromLayout() {
+function syncSplomZoomBaseFromLayout(animate) {
     const refs = ensureSplomZoomLayerStructure()
     if (!refs || !refs.zoomLayer) return
-    const baseWidth = refs.zoomLayer.scrollWidth || refs.zoomLayer.offsetWidth
-    const baseHeight = refs.zoomLayer.scrollHeight || refs.zoomLayer.offsetHeight
+    var zl = refs.zoomLayer
+    // Temporarily remove scale so we measure the true unscaled size
+    var prevTransform = zl.style.transform
+    var prevTransition = zl.style.transition
+    zl.style.transition = "none"
+    zl.style.transform = "none"
+    var baseWidth = zl.scrollWidth || zl.offsetWidth
+    var baseHeight = zl.scrollHeight || zl.offsetHeight
+    zl.style.transform = prevTransform
+    zl.style.transition = prevTransition
     setSplomBaseSize(baseWidth, baseHeight)
-    applySplomZoom()
+    applySplomZoom(!!animate)
 }
+
+window._splomZoomingActive = false
+var _splomZoomingActive = false
+var _splomZoomEndTimer = null
 
 function zoomSplomAroundPointer(container, zoomLayer, event, oldScale, newScale) {
     const rect = container.getBoundingClientRect()
@@ -2170,36 +2843,50 @@ function zoomSplomAroundPointer(container, zoomLayer, event, oldScale, newScale)
     const contentX = (scrollX + pointerX) / oldScale
     const contentY = (scrollY + pointerY) / oldScale
 
+    _splomZoomingActive = true
+    window._splomZoomingActive = true
     splomZoomScale = newScale
-    applySplomZoom()
+
+    // Apply transform directly without transition for interactive zoom
+    zoomLayer.style.transition = "none"
+    zoomLayer.style.transform = "scale(" + newScale + ")"
+
+    // Update scroll area dimensions without triggering reflow-heavy updates
+    var sc = container.querySelector(".splom-scroll-content")
+    if (sc && splomBaseWidth && splomBaseHeight) {
+        sc.style.width = (splomBaseWidth * newScale) + "px"
+        sc.style.height = (splomBaseHeight * newScale) + "px"
+    }
 
     container.scrollLeft = contentX * newScale - pointerX
     container.scrollTop = contentY * newScale - pointerY
 
-    console.log("[SPLOM pinch zoom]", {
-        oldScale: oldScale,
-        newScale: newScale,
-        pointerX: pointerX,
-        pointerY: pointerY,
-        scrollLeft: container.scrollLeft,
-        scrollTop: container.scrollTop
-    })
+    // Defer expensive post-zoom work (lazy cell rendering, visual scale updates)
+    clearTimeout(_splomZoomEndTimer)
+    _splomZoomEndTimer = setTimeout(function () {
+        _splomZoomingActive = false
+        window._splomZoomingActive = false
+        updateSplomZoomVisualScale()
+        // Trigger lazy render for any newly visible cells
+        if (typeof sploom !== "undefined" && sploom.renderPendingVisibleSplomCells) {
+            try {
+                sploom.renderPendingVisibleSplomCells(
+                    getSplomPrimaryRenderRows(), splom, viewVisitcount, maxSplomAcc
+                )
+            } catch (e) { /* ignore */ }
+        }
+    }, 150)
 }
 
 function installSplomPinchZoom() {
     const refs = ensureSplomZoomLayerStructure()
     if (!refs) {
-        console.warn("[SPLOM pinch zoom] Could not install", { container: null, zoomLayer: null })
         return
     }
     const container = refs.container
     const zoomLayer = refs.zoomLayer
 
     if (!container || !zoomLayer) {
-        console.warn("[SPLOM pinch zoom] Could not install", {
-            container: container,
-            zoomLayer: zoomLayer
-        })
         return
     }
 
@@ -2210,6 +2897,10 @@ function installSplomPinchZoom() {
 
     container.__splomPinchZoomInstalled = true
 
+    var pendingZoomRAF = null
+    var pendingZoomNewScale = null
+    var pendingZoomEvent = null
+
     container.addEventListener("wheel", function (event) {
         if (!event.ctrlKey) {
             return
@@ -2218,44 +2909,39 @@ function installSplomPinchZoom() {
         event.preventDefault()
         event.stopPropagation()
 
-        const oldScale = splomZoomScale
-        const zoomFactor = 1 - event.deltaY * SPLOM_ZOOM_SPEED
-        const newScale = clamp(oldScale * zoomFactor, SPLOM_MIN_ZOOM, SPLOM_MAX_ZOOM)
+        var zoomFactor = 1 - event.deltaY * SPLOM_ZOOM_SPEED
+        var target = (pendingZoomNewScale !== null ? pendingZoomNewScale : splomZoomScale) * zoomFactor
+        target = clamp(target, SPLOM_MIN_ZOOM, SPLOM_MAX_ZOOM)
 
-        if (newScale === oldScale) return
-        zoomSplomAroundPointer(container, zoomLayer, event, oldScale, newScale)
+        if (target === splomZoomScale && pendingZoomNewScale === null) return
+
+        pendingZoomNewScale = target
+        pendingZoomEvent = event
+
+        if (pendingZoomRAF === null) {
+            pendingZoomRAF = requestAnimationFrame(function () {
+                var ns = pendingZoomNewScale
+                var ev = pendingZoomEvent
+                pendingZoomRAF = null
+                pendingZoomNewScale = null
+                pendingZoomEvent = null
+                if (ns !== null && ns !== splomZoomScale) {
+                    zoomSplomAroundPointer(container, zoomLayer, ev, splomZoomScale, ns)
+                }
+            })
+        }
     }, { passive: false })
 
-    console.log("[SPLOM pinch zoom] Installed without changing scroll behavior")
-}
-
-function installSplomWheelDebug() {
-    const container = getSplomScrollContainer()
-    if (!container || container.__splomWheelDebugInstalled) return
-    container.__splomWheelDebugInstalled = true
-
-    container.addEventListener("wheel", function (event) {
-        console.log("[SPLOM wheel debug]", {
-            deltaX: event.deltaX,
-            deltaY: event.deltaY,
-            ctrlKey: event.ctrlKey,
-            zoomScale: splomZoomScale,
-            scrollLeft: container.scrollLeft,
-            scrollTop: container.scrollTop,
-            defaultPrevented: event.defaultPrevented
-        })
-    }, { passive: true })
 }
 
 function resetSplomZoom() {
     const container = getSplomScrollContainer()
     splomZoomScale = 1
-    applySplomZoom()
+    applySplomZoom(true)
     if (container) {
         container.scrollLeft = 0
         container.scrollTop = 0
     }
-    console.log("[SPLOM pinch zoom reset]")
 }
 
 function getSplomCellsForPair(xDim, yDim) {
@@ -2528,11 +3214,7 @@ let renderSplomSoucheDropdown = null
 
 function refreshAllSelectionViews() {
     return timeBlock("refreshAllSelectionViews", function () {
-        if (mainviewSvg && datum) {
-            scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
-        }
-        refreshSplomAfterSelection()
-        syncOpenSoucheComparisonSelections()
+        refreshViewsAfterLayerSelectionChange()
     })
 }
 
@@ -2595,7 +3277,7 @@ function activateSoucheTriangleCompare(options) {
     }
     if (!opts.skipRebuild) {
         if (datum && splom && !splom.empty()) {
-            sploom.invalidateSplomCaches("souche triangle compare")
+            invalidateSplomForRowScopeChange("souche triangle compare")
             rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
         }
         refreshTableView()
@@ -2667,7 +3349,7 @@ function applyYeastOverlayFilter(source) {
     invalidateSplomDisplayRowsCache()
 
     if (datum && splom && !splom.empty()) {
-        sploom.invalidateSplomCaches("yeast filter")
+        invalidateSplomForRowScopeChange("yeast filter")
         rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
     }
     switchSelectionContext(getSelectionContextKey(), previousContextKey)
@@ -2707,6 +3389,10 @@ function syncSplomSoucheDropdownSelection() {
     try {
         const select = document.getElementById("splom-souche-select")
         const upperSelect = document.getElementById("splom-upper-souche-select")
+        const viewSelect = document.getElementById("splom-view-mode-select")
+        const categorySelect = document.getElementById("splom-category-variable-select")
+        if (viewSelect) viewSelect.value = splomViewMode === "full" ? "full" : "category"
+        if (categorySelect && yeastColumn) categorySelect.value = String(yeastColumn)
         if (!select && !upperSelect) return
         const selected = selectedYeastTypes && selectedYeastTypes.length ? String(selectedYeastTypes[0]) : ""
         if (select && selected) {
@@ -2721,6 +3407,124 @@ function syncSplomSoucheDropdownSelection() {
     } catch (err) {
         console.warn("[Souche dropdown] sync failed", err)
     }
+}
+
+function getCategoricalGroupingColumns() {
+    const cols = (categoricalColumns || []).slice()
+    if (yeastColumn && cols.indexOf(yeastColumn) === -1) cols.unshift(yeastColumn)
+    return cols
+}
+
+/** Soft invalidate when only which rows are shown changed (souche / compare swap). */
+function invalidateSplomForRowScopeChange(reason) {
+    invalidateSplomDisplayRowsCache()
+    sploom.invalidateSplomRowsCache(reason || "row scope")
+}
+
+let pendingSplomRebuildTimer = null
+function scheduleSplomRebuildForCompareSwitch(reason) {
+    invalidateSplomForRowScopeChange(reason)
+    if (pendingSplomRebuildTimer) clearTimeout(pendingSplomRebuildTimer)
+    pendingSplomRebuildTimer = setTimeout(function () {
+        pendingSplomRebuildTimer = null
+        if (!datum || !splom || splom.empty()) return
+        rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
+        refreshMainChartRendering()
+        refreshSplomHeatFromVisitCounts()
+    }, 45)
+}
+
+/** Shared refresh after the SPLOM row scope (view mode / grouping variable) changed. */
+function refreshAfterSplomCategoryStateChange(reason) {
+    syncSplomModeRadios()
+    syncYeastTrianglePickerUI()
+    ensureMainChartYeastViewControl()
+    ensureSelectionTargetControl()
+    syncYeastPanelCheckboxes()
+    syncCurrentContextToLayerSouche()
+    invalidateSplomForRowScopeChange(reason)
+    if (datum && splom && !splom.empty()) {
+        rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
+    }
+    refreshSplomHeatFromVisitCounts()
+    refreshTableView()
+    rebuildColoredSelectionContentFromSoucheKeys()
+    refreshMainChartRendering()
+    updateMainChartSoucheNavigator()
+    if (renderSplomSoucheDropdown) renderSplomSoucheDropdown()
+    syncSplomSoucheDropdownSelection()
+}
+
+function applySplomViewMode(nextMode, options) {
+    const opts = options || {}
+    const mode = nextMode === "full" ? "full" : "category"
+    if (mode === splomViewMode && !opts.force) return
+
+    if (mode === "full") {
+        savedCategoryViewState = {
+            selectedYeastTypes: (selectedYeastTypes || []).slice(),
+            lower: triangleLowerYeast,
+            upper: triangleUpperYeast,
+            compareActive: soucheTriangleCompareActive
+        }
+        splomViewMode = "full"
+        selectedYeastTypes = []
+        deactivateSoucheTriangleCompare({ skipRadioSync: true })
+    } else {
+        splomViewMode = "category"
+        const saved = savedCategoryViewState || {}
+        const availableSet = new Set((availableYeastTypes || []).map(String))
+        const savedSelection = (saved.selectedYeastTypes || [])
+            .map(String)
+            .filter(function (s) { return availableSet.has(s) })
+        const savedLower = saved.lower && availableSet.has(String(saved.lower)) ? String(saved.lower) : null
+        const savedUpper = saved.upper && availableSet.has(String(saved.upper)) ? String(saved.upper) : null
+        if (saved.compareActive && savedLower && savedUpper && savedLower !== savedUpper) {
+            selectedYeastTypes = [savedLower, savedUpper]
+            activateSoucheTriangleCompare({ skipRebuild: true, skipRadioSync: true, silent: true })
+        } else {
+            selectedYeastTypes = savedSelection.length
+                ? [savedSelection[0]]
+                : (availableYeastTypes.length ? [String(availableYeastTypes[0])] : [])
+        }
+    }
+
+    refreshAfterSplomCategoryStateChange("splom view mode")
+    logProvenanceAction("set_splom_view_mode", {
+        splomViewMode: splomViewMode,
+        source: opts.source || "splom-view-dropdown",
+        selectedYeastTypes: selectedYeastTypes.slice()
+    })
+}
+
+function applySplomComparisonVariable(nextColumn, options) {
+    const opts = options || {}
+    const normalized = nextColumn ? String(nextColumn) : null
+    if (!normalized || normalized === yeastColumn) return
+    if (getCategoricalGroupingColumns().indexOf(normalized) === -1) return
+
+    yeastColumn = normalized
+    soucheTriangleCompareActive = false
+    yeastMode = "overlay"
+    triangleLowerYeast = null
+    triangleUpperYeast = null
+    selectedYeastTypes = []
+    currentSouche = null
+    currentSoucheIndex = 0
+    savedCategoryViewState = null
+    if (splomMode === "compare" && !canDatasetSplomCompare()) splomMode = "single"
+    bumpSoucheRowsIndexVersion()
+    refreshAvailableYeastTypes()
+    if (splomViewMode !== "full" && !selectedYeastTypes.length && availableYeastTypes.length) {
+        selectedYeastTypes = [String(availableYeastTypes[0])]
+    }
+
+    refreshAfterSplomCategoryStateChange("splom comparison variable")
+    logProvenanceAction("set_splom_comparison_variable", {
+        comparisonVariable: yeastColumn,
+        source: opts.source || "splom-category-variable-dropdown",
+        selectedYeastTypes: selectedYeastTypes.slice()
+    })
 }
 
 function applyUpperTriangleSoucheSelection(nextUpperSouche, options) {
@@ -2760,13 +3564,12 @@ function applyUpperTriangleSoucheSelection(nextUpperSouche, options) {
 
     invalidateSplomDisplayRowsCache()
     if (datum && splom && !splom.empty()) {
-        sploom.invalidateSplomCaches("souche upper dropdown")
-        rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
+        scheduleSplomRebuildForCompareSwitch("souche upper dropdown")
+    } else {
+        refreshMainChartRendering()
     }
-    refreshSplomHeatFromVisitCounts()
     refreshTableView()
     rebuildColoredSelectionContentFromSoucheKeys()
-    refreshMainChartRendering()
     if (renderSplomSoucheDropdown) renderSplomSoucheDropdown()
     logProvenanceAction("set_upper_triangle_souche", {
         source: source,
@@ -2839,6 +3642,7 @@ function getSessionUiState() {
     return {
         mainChartMode: mainChartMode,
         selectedColumns: selectedColumns.slice(),
+        appliedSplomDimensions: appliedSplomDimensions ? appliedSplomDimensions.slice() : null,
         dimensionFamilies: dimensionFamilies.cloneFamilies(currentDimensionFamilies),
         expandedFamilies: Array.from(expandedFamilies),
         yeastColumn: yeastColumn,
@@ -2850,9 +3654,11 @@ function getSessionUiState() {
         soucheTriangleCompareActive: soucheTriangleCompareActive,
         triangleLowerYeast: triangleLowerYeast,
         triangleUpperYeast: triangleUpperYeast,
+        splomViewMode: splomViewMode,
         mainChartYeastView: mainChartYeastView,
         savedYeastPairComparisons: savedYeastPairComparisons.slice(),
         selectionTarget: selectionTarget,
+        lastClickedSplomTriangle: lastClickedSplomTriangle,
         currentPair: { xDim: mainChartMvX, yDim: mainChartMvY },
         visibleSplomDimensions: getVisibleSplomDimensions(),
         visibleTableColumns: getVisibleTableColumns(),
@@ -2880,6 +3686,12 @@ function applySessionUiState(ui) {
             return numericDimensions.indexOf(d) !== -1
         })
     }
+    if (ui.appliedSplomDimensions) {
+        setAppliedSplomDimensions(ui.appliedSplomDimensions)
+    } else if (ui.selectedColumns && ui.selectedColumns.length) {
+        // Back-compat: older sessions used selectedColumns as the open set.
+        setAppliedSplomDimensions(ui.selectedColumns)
+    }
     if (ui.dimensionFamilies) {
         currentDimensionFamilies = dimensionFamilies.cloneFamilies(ui.dimensionFamilies)
         syncDimensionFamiliesState()
@@ -2887,6 +3699,7 @@ function applySessionUiState(ui) {
     if (ui.expandedFamilies) {
         expandedFamilies = new Set(ui.expandedFamilies)
     }
+    splomViewMode = ui.splomViewMode === "full" ? "full" : "category"
     if (ui.availableYeastTypes) availableYeastTypes = ui.availableYeastTypes.slice()
     if (ui.currentSoucheIndex != null) currentSoucheIndex = ui.currentSoucheIndex
     if (ui.currentSouche != null) currentSouche = ui.currentSouche
@@ -2919,6 +3732,7 @@ function applySessionUiState(ui) {
     if (ui.currentPair && ui.currentPair.yDim) mainChartMvY = ui.currentPair.yDim
     if (renderYeastFilterPanel) renderYeastFilterPanel()
     ensureMainChartYeastViewControl()
+    ensureMainChartSelectionModeControl()
     syncColumnHighlightUI()
     renderFamilyDimensionPanel()
     sploom.setSplomOverviewOptions(
@@ -2967,16 +3781,20 @@ function applySessionUiState(ui) {
 
 function applyLightSessionContextForRestore(session) {
     if (!session) return
+    splomViewMode = session.splomViewMode === "full" ? "full" : "category"
     if (session.currentSoucheIndex != null) currentSoucheIndex = session.currentSoucheIndex
     if (session.currentSouche != null) currentSouche = session.currentSouche
     syncCurrentSoucheState()
     if (session.selectedYeastTypes) selectedYeastTypes = session.selectedYeastTypes.slice()
     if (session.yeastMode) yeastMode = session.yeastMode
+    if (session.splomMode) splomMode = session.splomMode === "compare" ? "compare" : "single"
     if (session.soucheTriangleCompareActive && session.triangleLowerYeast && session.triangleUpperYeast) {
         soucheTriangleCompareActive = true
         yeastMode = "compare"
+        splomMode = "compare"
         triangleLowerYeast = session.triangleLowerYeast
         triangleUpperYeast = session.triangleUpperYeast
+        selectedYeastTypes = [String(triangleLowerYeast), String(triangleUpperYeast)]
     } else if (!session.soucheTriangleCompareActive && session.yeastMode !== "compare") {
         soucheTriangleCompareActive = false
         triangleLowerYeast = null
@@ -2989,8 +3807,18 @@ function applyLightSessionContextForRestore(session) {
         activeDatasetSource = session.activeDatasetSource === "comparison" ? "comparison" : "primary"
     }
     if (session.currentSelectionType != null) current_selectionType = session.currentSelectionType
+    if (session.lastClickedSplomTriangle === "lower" || session.lastClickedSplomTriangle === "upper") {
+        lastClickedSplomTriangle = session.lastClickedSplomTriangle
+    }
     ensureMainChartSoucheNavigator()
     updateMainChartSoucheNavigator()
+    ensureMainChartSelectionModeControl()
+    syncSplomModeRadios()
+    if (datum && splom && !splom.empty()) {
+        sploom.invalidateSplomCaches("history restore")
+        rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
+    }
+    refreshMainChartRendering()
 }
 
 function normalizeSelectionsOrder() {
@@ -3188,7 +4016,7 @@ function rebuildFavoritesFromIndices() {
         savedFavs.push({
             xDim: st.mvX,
             yDim: st.mvY,
-            data: cloneDeep(datum)
+            data: null
         })
     }
     updateFavorites(savedFavs)
@@ -3279,7 +4107,7 @@ function applyUploadedProvenanceLog(payload) {
                 return {
                     xDim: entry.xDim,
                     yDim: entry.yDim,
-                    data: cloneDeep(datum),
+                    data: null,
                     state: entry.state ? cloneDeep(entry.state) : null
                 }
             })
@@ -3459,14 +4287,18 @@ function syncSplomHighlightColors() {
 }
 
 function getSplomDisplayData() {
-    return getSplomVisualizationData()
+    return getSplomPrimaryRenderRows()
 }
 
 function executeSplomSelectionRefresh(previewIdSet) {
     return timeBlock("executeSplomSelectionRefresh", function () {
         if (!datum || !splom || splom.empty()) return
         syncSplomCacheRowScope()
-        if (!previewIdSet) ensureSelectionMembershipIndex()
+        if (!previewIdSet) {
+            syncSelectionVisualState()
+        } else {
+            ensureSelectionMembershipIndex()
+        }
         syncSplomHighlightColors()
         const visData = getSplomDisplayData()
         const selectedRows = getSelectedSplomRows()
@@ -3490,7 +4322,7 @@ function executeSplomSelectionRefresh(previewIdSet) {
             previewIdSet || null
         )
         if (!previewIdSet) {
-            updateActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
+            scheduleActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
         }
     })
 }
@@ -3519,9 +4351,7 @@ function requestSelectionRestyle() {
     selectionRestylePending = true
     requestAnimationFrame(function () {
         selectionRestylePending = false
-        rebuildSelectionMembershipIndex()
-        restyleMainChartSelections()
-        restyleSplomSelections()
+        refreshViewsAfterLayerSelectionChange()
         updateSelectionCountsLight()
     })
 }
@@ -3575,24 +4405,24 @@ function refreshSplomAfterSelection(previewIdSet, forceImmediate) {
 // the main scatterplot points, and the SPLOM overlay.
 function refreshViewsAfterLayerSelectionChange() {
     cancelPendingSplomSelectionUpdate()
-    rebuildSelectionMembershipIndex()
     if (splom && !splom.empty()) {
         syncSplomHighlightColors()
         splom.property("__splomSelectedRows", getSelectedSplomRows())
         splom.property("__splomSelectedIdSet", getSelectedIdSet())
     }
-    if (mainviewSvg && datum) {
-        scaterplot.updatePointsAfterSelection(getMainChartPrimaryData(), mainviewSvg)
-    }
+    repaintMainChartSelectionState()
     refreshSplomAfterSelection(null, true)
+    scheduleActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
     refreshSplomHeatFromVisitCounts()
+    refreshTableSelectionColorSwatches()
+    syncOpenSoucheComparisonSelections()
 }
 
 function updateSplomView(renderOptions) {
     return timeBlock("updateSplomView", function () {
         if (!datum || !splom || splom.empty()) return
         syncSplomHighlightColors()
-        sploom.updateSplom(getVisualizationData(), splom, sampleData, maxSplomAcc, viewVisitcount, renderOptions || null)
+        sploom.updateSplom(getSplomPrimaryRenderRows(), splom, sampleData, maxSplomAcc, viewVisitcount, renderOptions || null)
     })
 }
 
@@ -3617,6 +4447,12 @@ function expandAllFamilies() {
 function getSplomFamilyLayout() {
     if (!hasDimensionFamilies()) return null
     syncDimensionFamiliesState()
+    const selectionFilter = getSplomDimensionFilter()
+    if (selectionFilter && selectionFilter.length) {
+        return dimensionFamilies.buildSplomFamilyLayoutForFilter(
+            currentDimensionFamilies, expandedFamilies, allDimensions, selectionFilter
+        )
+    }
     return dimensionFamilies.buildSplomFamilyLayout(
         currentDimensionFamilies, expandedFamilies, allDimensions
     )
@@ -3638,22 +4474,90 @@ function getVisibleSplomDimensionsFromFamilies() {
     )
 }
 
+function normalizeDimensionList(dims) {
+    const out = []
+    const list = dims || []
+    for (let i = 0; i < list.length; i++) {
+        const dim = list[i]
+        if (!dim || allDimensions.indexOf(dim) === -1) continue
+        if (out.indexOf(dim) === -1) out.push(dim)
+    }
+    return out
+}
+
+function getSplomDimensionFilter() {
+    if (!appliedSplomDimensions || !appliedSplomDimensions.length) return null
+    return normalizeDimensionList(appliedSplomDimensions)
+}
+
+function hasActiveSplomDimensionFilter() {
+    const filter = getSplomDimensionFilter()
+    return !!(filter && filter.length)
+}
+
+function setAppliedSplomDimensions(dims) {
+    const next = normalizeDimensionList(dims)
+    appliedSplomDimensions = next.length ? next : null
+}
+
+function ensureDimsInAppliedSplom(dims) {
+    const add = normalizeDimensionList(dims)
+    if (!add.length) return
+    const current = hasActiveSplomDimensionFilter()
+        ? getSplomDimensionFilter().slice()
+        : getVisibleSplomDimensions().slice()
+    for (let i = 0; i < add.length; i++) {
+        if (current.indexOf(add[i]) === -1) current.push(add[i])
+    }
+    setAppliedSplomDimensions(current)
+}
+
+function getHiddenFamilyDimensionsOutsideSelection() {
+    if (!hasDimensionFamilies() || !hasActiveSplomDimensionFilter()) return []
+    syncDimensionFamiliesState()
+    return dimensionFamilies.getPartialFamilySelectionWarnings(
+        currentDimensionFamilies, allDimensions, getSplomDimensionFilter()
+    )
+}
+
+function updateSplomDimensionFamilyWarnings() {
+    if (!hasDimensionFamilies() || !hasActiveSplomDimensionFilter()) {
+        setFamilyMapWarnings([])
+        return
+    }
+    syncDimensionFamiliesState()
+    const partial = dimensionFamilies.getPartialFamilySelectionWarnings(
+        currentDimensionFamilies, allDimensions, getSplomDimensionFilter()
+    )
+    if (!partial.length) {
+        setFamilyMapWarnings([])
+        return
+    }
+    setFamilyMapWarnings(partial.map(function (entry) { return entry.message }))
+}
+
 function applyDatasetColumnClassification(data) {
     const classified = datasetColumns.classifyDatasetColumns(data)
     allColumns = classified.allColumns.slice()
     metadataColumns = classified.metadataColumns.slice()
     numericDimensions = classified.numericDimensions.slice()
-    dimensions = numericDimensions.slice()
-    allDimensions = numericDimensions.slice()
+    categoricalColumns = (classified.categoricalColumns || []).slice()
+    // SPLOM axes = numeric + categorical (including Souche / species / etc.)
+    const splomDims = (classified.splomDimensions && classified.splomDimensions.length)
+        ? classified.splomDimensions.slice()
+        : numericDimensions.concat(categoricalColumns.filter(function (c) {
+            return numericDimensions.indexOf(c) === -1
+        }))
+    dimensions = splomDims.slice()
+    allDimensions = splomDims.slice()
     yeastColumn = classified.yeastColumn
+    if (!yeastColumn && categoricalColumns.length) yeastColumn = categoricalColumns[0]
     selectedColumns = selectedColumns.filter(function (d) {
-        return numericDimensions.indexOf(d) !== -1
+        return allDimensions.indexOf(d) !== -1
     })
-
-    console.log("[Dataset] all columns:", allColumns)
-    console.log("[Dataset] numeric dimensions:", numericDimensions)
-    console.log("[Dataset] metadata columns:", metadataColumns)
-    console.log("[Dataset] yeast column:", yeastColumn)
+    if (appliedSplomDimensions) {
+        setAppliedSplomDimensions(appliedSplomDimensions)
+    }
 
     return classified
 }
@@ -3689,7 +4593,7 @@ function refreshAvailableYeastTypes() {
     selectedYeastTypes = (selectedYeastTypes || [])
         .map(String)
         .filter(function (s) { return availableSet.has(s) })
-    if (!selectedYeastTypes.length && currentSouche != null) {
+    if (splomViewMode !== "full" && !selectedYeastTypes.length && currentSouche != null) {
         selectedYeastTypes = [String(currentSouche)]
     }
     if (triangleLowerYeast && !availableSet.has(String(triangleLowerYeast))) triangleLowerYeast = null
@@ -3738,10 +4642,20 @@ function isMainChartMultiSoucheOverlay() {
     return false
 }
 
+function mainChartUsesYeastAsAxis() {
+    const dims = getMainChartDims()
+    if (!yeastColumn || !dims) return false
+    return dims.xDim === yeastColumn || dims.yDim === yeastColumn
+}
+
 function shouldShowMainChartSoucheNavigator() {
+    // Full Dataset view: main chart always mirrors the whole table — no per-category filter.
+    if (splomViewMode === "full") return false
     if (!yeastColumn || availableYeastTypes.length < 2) return false
     if (isSoucheCompareModeActive()) return false
     if (isMainChartMultiSoucheOverlay()) return false
+    // When the active categorical is itself an axis, filtering collapses bands.
+    if (mainChartUsesYeastAsAxis()) return false
     return true
 }
 
@@ -3758,7 +4672,8 @@ function updateSoucheNavigatorLabel() {
     }
     const total = availableYeastTypes.length
     const index = currentSoucheIndex + 1
-    label.textContent = "Souche " + index + "/" + total + ": " + currentSouche
+    const varName = yeastColumn || "Category"
+    label.textContent = varName + " " + index + "/" + total + ": " + currentSouche
 }
 
 function updateMainChartPairTitle() {
@@ -3772,8 +4687,16 @@ function updateMainChartPairTitle() {
         return
     }
     let title = xDim + " vs " + yDim
-    if (isMainChartSoucheNavigatorActive()) {
-        title += " — Souche " + (currentSoucheIndex + 1) + "/" + availableYeastTypes.length + ": " + currentSouche
+    if (isMainChartDistributionMode()) {
+        title = "Distribution: " + mainChartDistributionDim
+        if (triangleLowerYeast && triangleUpperYeast) {
+            title += " — " + triangleLowerYeast + " vs " + triangleUpperYeast
+        }
+    } else if (splomViewMode === "full") {
+        title += " — Full Dataset"
+    } else if (isMainChartSoucheNavigatorActive()) {
+        const varName = yeastColumn || "Category"
+        title += " — " + varName + " " + (currentSoucheIndex + 1) + "/" + availableYeastTypes.length + ": " + currentSouche
     }
     el.textContent = title
     el.hidden = false
@@ -3787,6 +4710,32 @@ function updateMainChartSoucheNavigator() {
     if (!show) return
 
     updateSoucheNavigatorLabel()
+
+    const groupingColumns = getCategoricalGroupingColumns()
+    const categorySelect = document.getElementById("main-chart-category-variable-select")
+    const categoryLabel = nav.querySelector(".main-chart-category-variable-label")
+    if (categorySelect) {
+        const showCategoryPicker = groupingColumns.length >= 2
+        categorySelect.style.display = showCategoryPicker ? "" : "none"
+        if (categoryLabel) categoryLabel.style.display = showCategoryPicker ? "" : "none"
+        if (showCategoryPicker && !categorySelect.__vispromSyncing) {
+            categorySelect.__vispromSyncing = true
+            categorySelect.innerHTML = groupingColumns.map(function (col) {
+                return "<option value=\"" + String(col).replace(/"/g, "&quot;") + "\">" + col + "</option>"
+            }).join("")
+            if (yeastColumn) categorySelect.value = String(yeastColumn)
+            categorySelect.__vispromSyncing = false
+        }
+        if (!categorySelect.__vispromBound) {
+            categorySelect.__vispromBound = true
+            categorySelect.addEventListener("change", function () {
+                if (categorySelect.__vispromSyncing) return
+                applySplomComparisonVariable(categorySelect.value, {
+                    source: "main-chart-category-variable-select"
+                })
+            })
+        }
+    }
 
     const select = document.getElementById("souche-select")
     if (select && !select.__vispromSyncing) {
@@ -3809,7 +4758,9 @@ function getSelectionContextKey() {
     if (isSoucheCompareModeActive()) {
         const a = triangleLowerYeast || "none"
         const b = triangleUpperYeast || "none"
-        return "souche-compare:" + a + "|" + b + "|target:" + selectionTarget
+        // Deliberately independent of the Main Chart selection mode: switching
+        // between lower/upper/both must never repartition stored selections.
+        return "souche-compare:" + a + "|" + b
     }
     if (yeastColumn && selectedYeastTypes && selectedYeastTypes.length) {
         const sorted = selectedYeastTypes.slice().map(String).sort().join("|")
@@ -3918,11 +4869,6 @@ function downloadAllSelectedCsv() {
         }
     })
 
-    console.log("[CSV export] Downloaded selected points CSV", {
-        filename: filename,
-        rowCount: rows.length,
-        selectionLayerCount: layers.length
-    })
     logProvenanceAction("download_selected_points_csv", {
         filename: filename,
         rowCount: rows.length,
@@ -4128,7 +5074,7 @@ function updateViewsForCurrentSouche(source, previousContextKey) {
     switchSelectionContext(nextContextKey, previousContextKey)
     refreshMainChartRendering()
     if (datum && splom && !splom.empty()) {
-        sploom.invalidateSplomCaches("souche navigator")
+        invalidateSplomForRowScopeChange("souche navigator")
         rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
     }
     selectionsList(selections, selList)
@@ -4200,7 +5146,9 @@ function ensureMainChartSoucheNavigator() {
 }
 
 function getRowsForSouche(soucheValue) {
-    if (!datum || !yeastColumn || soucheValue == null || soucheValue === "") return []
+    if (!datum) return []
+    if (isAllComparisonGroup(soucheValue)) return datum
+    if (!yeastColumn || soucheValue == null || soucheValue === "") return []
     const index = buildSoucheRowsIndex()
     return index.get(String(soucheValue)) || []
 }
@@ -4258,6 +5206,7 @@ function syncTriangleYeastsFromSelection() {
 }
 
 function isSoucheCompareModeActive() {
+    if (splomViewMode === "full") return false
     return !!(soucheTriangleCompareActive &&
         triangleLowerYeast &&
         triangleUpperYeast &&
@@ -4282,22 +5231,136 @@ function getMainChartSelectionDataset() {
     return getActiveSelectionDataset()
 }
 
+function isAllComparisonGroup(value) {
+    if (value == null || value === "") return false
+    const text = String(value)
+    return text === "All" || text === "__ALL__"
+}
+
+function getUniqueRowUnion(left, right) {
+    const out = []
+    const seen = new Set()
+    function add(rows) {
+        if (!rows) return
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i]
+            if (!row) continue
+            const rowId = row.__rowId != null ? row.__rowId : row.id
+            if (rowId != null) {
+                if (seen.has(rowId)) continue
+                seen.add(rowId)
+            }
+            out.push(row)
+        }
+    }
+    add(left)
+    add(right)
+    return out
+}
+
 function getBrushEligibleDataset() {
+    if (splomViewMode === "full") return datum || []
     if (isMainChartSoucheNavigatorActive()) return getRowsForCurrentSouche()
-    if (isSoucheCompareModeActive()) return getSplomDisplayRows()
+    if (isSoucheCompareModeActive()) {
+        const mode = getMainChartSelectionMode()
+        if (mode === "both") {
+            if (isAllComparisonGroup(triangleLowerYeast) || isAllComparisonGroup(triangleUpperYeast)) {
+                return datum
+            }
+            return getUniqueRowUnion(
+                getRowsForSouche(triangleLowerYeast),
+                getRowsForSouche(triangleUpperYeast)
+            )
+        }
+        const activeGroup = getMainChartActiveSelectionGroup()
+        if (!activeGroup || isAllComparisonGroup(activeGroup)) return datum
+        return getRowsForSouche(activeGroup)
+    }
     return getActiveSelectionDataset()
 }
 
+/**
+ * Main Chart selection mode: which comparison group a lasso/brush may claim.
+ * Both groups always stay drawn; the inactive one is only faded, so this
+ * controls selection eligibility rather than which rows exist in the view.
+ */
+function normalizeMainChartSelectionMode(mode) {
+    if (mode === "upper") return "upper"
+    if (mode === "both") return "both"
+    // Legacy "active" target and anything unrecognised fall back to the lower triangle.
+    return "lower"
+}
+
+function getMainChartSelectionMode() {
+    return normalizeMainChartSelectionMode(selectionTarget)
+}
+
+/** Group value whose rows are selectable, or null when both groups are eligible. */
+function getMainChartActiveSelectionGroup() {
+    if (!isSoucheCompareModeActive()) return null
+    const mode = getMainChartSelectionMode()
+    if (mode === "both") return null
+    const group = mode === "upper" ? triangleUpperYeast : triangleLowerYeast
+    return group != null && group !== "" ? String(group) : null
+}
+
+/** Selection eligibility for a single row under the current Main Chart mode. */
+function isRowEligibleForSelection(d) {
+    if (!d) return false
+    const activeGroup = getMainChartActiveSelectionGroup()
+    if (!activeGroup || !yeastColumn) return true
+    if (isAllComparisonGroup(activeGroup)) return true
+    const value = d[yeastColumn]
+    return value != null && String(value) === activeGroup
+}
+
+/** Triangle the selected-thumbnail border belongs to, or null when both are active. */
+function getActiveSplomTriangle() {
+    if (!isSoucheCompareModeActive()) return null
+    const mode = getMainChartSelectionMode()
+    return mode === "both" ? null : mode
+}
+
+function setMainChartSelectionMode(nextMode, options) {
+    const opts = options || {}
+    const normalized = normalizeMainChartSelectionMode(nextMode)
+    const changed = normalized !== getMainChartSelectionMode()
+    selectionTarget = normalized
+    ensureSelectionTargetControl()
+    updateMainChartSelectionModeControl()
+    if (!changed) return false
+    if (opts.skipRender !== true) {
+        refreshMainChartRendering()
+    }
+    scheduleActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
+    if (opts.silent !== true) {
+        logProvenanceAction("set_main_chart_selection_mode", {
+            selectionMode: normalized,
+            source: opts.source || "unknown",
+            comparisonVariable: yeastColumn,
+            lowerGroup: triangleLowerYeast,
+            upperGroup: triangleUpperYeast
+        })
+    }
+    return true
+}
+
 function getMainChartPrimaryData() {
+    // Full Dataset → every row on the main chart (matches SPLOM).
+    if (splomViewMode === "full") return datum || []
     if (isSoucheCompareModeActive()) {
         return getRowsForSouche(triangleLowerYeast)
     }
-    if (isMainChartSoucheNavigatorActive()) return getRowsForCurrentSouche()
+    // Category mode: navigator switches the active categorical value.
+    if (isMainChartSoucheNavigatorActive() && !mainChartUsesYeastAsAxis()) {
+        return getRowsForCurrentSouche()
+    }
     return getVisualizationData()
 }
 
 function getSplomVisualizationData() {
     if (!datum) return []
+    if (splomViewMode === "full") return datum
     if (!yeastColumn) return datum
     if (selectedYeastTypes.length > 1) {
         return getActiveRows()
@@ -4313,6 +5376,106 @@ function getSplomVisualizationData() {
 
 function getVisualizationData() {
     return getSplomDisplayRows()
+}
+
+/**
+ * Rows owned by the primary (lower) SPLOM triangle. In souche compare mode the
+ * lower triangle owns only its own group: the combined lower+upper scope from
+ * getSplomDisplayRows() is for brushing/selection, not for rendering a triangle.
+ */
+function getSplomPrimaryRenderRows() {
+    if (isSoucheCompareModeActive()) return getRowsForSouche(triangleLowerYeast)
+    return getSplomVisualizationData()
+}
+
+/** Rows owned by the comparison (upper) SPLOM triangle, or null when not comparing. */
+function getSplomComparisonRenderRows() {
+    if (isSoucheCompareModeActive()) return getRowsForSouche(triangleUpperYeast)
+    if (isSplomCompareModeActive()) return getComparisonVisualizationData() || comparisonDatasetRows
+    return null
+}
+
+function getSoucheTriangleDataReport() {
+    const lowerRows = getSplomPrimaryRenderRows()
+    const upperRows = getSplomComparisonRenderRows()
+    const groupsOf = function (rows) {
+        const seen = new Set()
+        ;(rows || []).forEach(function (row) {
+            if (row && yeastColumn) seen.add(String(row[yeastColumn]))
+        })
+        return Array.from(seen)
+    }
+    const idsOf = function (rows) {
+        const seen = new Set()
+        ;(rows || []).forEach(function (row) {
+            if (!row) return
+            const rowId = row.__rowId != null ? row.__rowId : row.id
+            if (rowId != null) seen.add(rowId)
+        })
+        return seen
+    }
+    const lowerIds = idsOf(lowerRows)
+    let exactRowOverlap = 0
+    idsOf(upperRows).forEach(function (rowId) {
+        if (lowerIds.has(rowId)) exactRowOverlap += 1
+    })
+    return {
+        soucheCompareActive: isSoucheCompareModeActive(),
+        comparisonVariable: yeastColumn,
+        lowerSelected: triangleLowerYeast,
+        upperSelected: triangleUpperYeast,
+        fullRows: datum ? datum.length : 0,
+        lowerRows: lowerRows ? lowerRows.length : 0,
+        upperRows: upperRows ? upperRows.length : 0,
+        lowerGroups: groupsOf(lowerRows),
+        upperGroups: groupsOf(upperRows),
+        exactRowOverlap: exactRowOverlap
+    }
+}
+
+/** Read-only view of selection mode, eligibility and per-group layer membership. */
+function getMainChartSelectionReport() {
+    const eligible = getBrushEligibleDataset() || []
+    const eligibleGroups = new Set()
+    eligible.forEach(function (row) {
+        if (row && yeastColumn) eligibleGroups.add(String(row[yeastColumn]))
+    })
+    const layers = []
+    for (let i = 1; i < selections.length; i++) {
+        const layer = selections[i]
+        if (!layer) continue
+        ensureSelectionLayerMeta(layer)
+        const bySouche = {}
+        Object.keys(layer.selectionsBySouche || {}).forEach(function (key) {
+            bySouche[key] = (layer.selectionsBySouche[key] || []).length
+        })
+        const contentGroups = {}
+        layer.content.forEach(function (d) {
+            const key = getSoucheKeyForPoint(d)
+            contentGroups[key] = (contentGroups[key] || 0) + 1
+        })
+        layers.push({
+            cname: layer.cname,
+            color: layer.color && layer.color.string ? layer.color.string.substr(0, 7) : null,
+            rowIdsBySouche: bySouche,
+            visibleContentBySouche: contentGroups
+        })
+    }
+    return {
+        selectionMode: getMainChartSelectionMode(),
+        activeGroup: getMainChartActiveSelectionGroup(),
+        comparisonVariable: yeastColumn,
+        lowerGroup: triangleLowerYeast,
+        upperGroup: triangleUpperYeast,
+        eligibleRows: eligible.length,
+        eligibleGroups: Array.from(eligibleGroups),
+        activeLayer: current_color && current_color[0] ? current_color[0].cname : null,
+        layers: layers
+    }
+}
+
+function logSoucheTriangleDataDiagnostics(source) {
+    if (!isSoucheCompareModeActive()) return
 }
 
 function getComparisonVisualizationData() {
@@ -4335,6 +5498,9 @@ function formatDatasetLoadSummary(classified) {
         "Dataset loaded.",
         "Numeric dimensions: " + (classified.numericDimensions ? classified.numericDimensions.length : 0)
     ]
+    if (classified.categoricalColumns && classified.categoricalColumns.length) {
+        lines.push("Categorical dimensions: " + classified.categoricalColumns.join(", "))
+    }
     if (classified.metadataColumns && classified.metadataColumns.length) {
         lines.push("Metadata columns: " + classified.metadataColumns.join(", "))
     }
@@ -4349,14 +5515,34 @@ function isSplomCompareModeActive() {
 }
 
 function getVisibleSplomDimensions() {
-    let dims = numericDimensions.slice()
+    let dims
+    const selectionFilter = getSplomDimensionFilter()
 
-    if (hasDimensionFamilies()) {
+    if (selectionFilter && selectionFilter.length) {
+        // Apply Selected Dimensions is strict: only the applied selection.
+        // Families only organize/label those dims in the SPLOM; they do not add more.
+        if (hasDimensionFamilies()) {
+            syncDimensionFamiliesState()
+            const layout = dimensionFamilies.buildSplomFamilyLayoutForFilter(
+                currentDimensionFamilies, expandedFamilies, allDimensions, selectionFilter
+            )
+            dims = []
+            ;(layout.groups || []).forEach(function (group) {
+                ;(group.dims || []).forEach(function (dim) {
+                    if (dims.indexOf(dim) === -1) dims.push(dim)
+                })
+            })
+            // Preserve any selected dim that somehow missed grouping.
+            selectionFilter.forEach(function (dim) {
+                if (dims.indexOf(dim) === -1) dims.push(dim)
+            })
+        } else {
+            dims = selectionFilter.slice()
+        }
+    } else if (hasDimensionFamilies()) {
         dims = getVisibleSplomDimensionsFromFamilies()
-    } else if (selectedColumns.length) {
-        dims = selectedColumns.filter(function (d) {
-            return numericDimensions.indexOf(d) !== -1
-        })
+    } else {
+        dims = allDimensions.slice()
     }
 
     if (isSplomCompareModeActive()) {
@@ -4364,11 +5550,11 @@ function getVisibleSplomDimensions() {
         dims = dims.filter(function (d) { return sharedSet.has(d) })
     }
 
-    return dims.filter(function (dim) { return numericDimensions.indexOf(dim) !== -1 })
+    return dims.filter(function (dim) { return allDimensions.indexOf(dim) !== -1 })
 }
 
 function getTableNumericColumns() {
-    return numericDimensions.slice()
+    return allDimensions.slice()
 }
 
 function buildTableFamilyGroups(columnsForTable) {
@@ -4401,6 +5587,20 @@ function buildTableFamilyGroups(columnsForTable) {
 
 function getSplomDimensionsForDisplay() {
     return getVisibleSplomDimensions()
+}
+
+function getSplomDimensionStateReport() {
+    return {
+        selectedColumns: selectedColumns.slice(),
+        appliedSplomDimensions: appliedSplomDimensions ? appliedSplomDimensions.slice() : null,
+        selectionFilter: getSplomDimensionFilter(),
+        hasActiveSelectionFilter: hasActiveSplomDimensionFilter(),
+        visibleSplomDimensions: getVisibleSplomDimensions(),
+        familyNames: dimensionFamilies.sortFamilyNames(Object.keys(currentDimensionFamilies)),
+        expandedFamilies: dimensionFamilies.sortFamilyNames(Array.from(expandedFamilies)),
+        hiddenFamilyDimensions: getHiddenFamilyDimensionsOutsideSelection(),
+        customDimensions: customDimensionExpressions.slice()
+    }
 }
 
 function getVisibleTableColumns() {
@@ -4447,7 +5647,8 @@ function getMainChartOverlayOptions() {
             viewMode: "overlay",
             comparisonData: getRowsForSouche(triangleUpperYeast),
             primaryLabel: triangleLowerYeast,
-            comparisonLabel: triangleUpperYeast
+            comparisonLabel: triangleUpperYeast,
+            activeGroup: getMainChartSelectionMode()
         }
     }
     if (!comparisonDatasetRows || !comparisonDatasetRows.length) return null
@@ -4495,9 +5696,9 @@ function rebuildSplomFromFamilyState() {
     return timeBlock("rebuildSplomFromFamilyState", function () {
         if (!datum || !splom || splom.empty()) return
         const dims = getVisibleSplomDimensions()
-        const layout = getSplomFamilyLayout()
+        updateSplomDimensionFamilyWarnings()
 
-        if (hasDimensionFamilies() && !dims.length) {
+        if (hasDimensionFamilies() && !dims.length && !hasActiveSplomDimensionFilter()) {
             splom.html("")
             ensureSplomFamilyToolbar()
             splom.append("div")
@@ -4518,6 +5719,7 @@ function getSplomFrontsCacheKey() {
 }
 
 function getSplomDataFilterCacheSuffix() {
+    if (splomViewMode === "full") return "|full"
     if (isSoucheCompareModeActive()) {
         return "|souche|" + triangleLowerYeast + "|" + triangleUpperYeast
     }
@@ -4550,14 +5752,9 @@ function rebuildSplomWithDimensions(dimsForSplom) {
     const datasetCompareActive = !soucheCompareActive && isSplomCompareModeActive()
     const compareActive = soucheCompareActive || datasetCompareActive
 
-    let visData = getSplomVisualizationData()
-    let visComparisonData = null
-    if (soucheCompareActive) {
-        visData = getRowsForSouche(triangleLowerYeast)
-        visComparisonData = getRowsForSouche(triangleUpperYeast)
-    } else if (datasetCompareActive) {
-        visComparisonData = getComparisonVisualizationData() || comparisonDatasetRows
-    }
+    const visData = getSplomPrimaryRenderRows()
+    const visComparisonData = compareActive ? getSplomComparisonRenderRows() : null
+    logSoucheTriangleDataDiagnostics("rebuildSplomWithDimensions")
 
     sploom.setSplomSelectionCheckProvider(isPointInVisibleSplomSelection)
     sploom.setSplomVisitCountKeyProvider(getSplomVisitCountKey)
@@ -4584,15 +5781,52 @@ function rebuildSplomWithDimensions(dimsForSplom) {
         familyLayout: familyLayout
     } : { visitSoucheKey: getSplomSoucheKey(), familyLayout: familyLayout }
 
-    if (cachedSet && cachedSet.dimsForSplom && cachedSet.domainMap) {
-        sploom.restoreSplomDimensionSet(cachedSet, visData, splom, sampleData, viewVisitcount, overviewOpts, allDimensions, frontsKey, restoreOpts)
-        cachedSet.familyLayout = familyLayout
-    } else {
-        const domainMap = compareActive
+    // Fast path: same SPLOM grid already built — swap row groups without wiping DOM.
+    const prevDims = splom.property("__splomDimensions")
+    const sameGrid = prevDims &&
+        prevDims.length === dimsForSplom.length &&
+        prevDims.every(function (d, i) { return d === dimsForSplom[i] }) &&
+        !!splom.property("__splomCompareMode") === !!compareActive &&
+        !!splom.select(".splom-cell").size()
+
+    let domainMap = cachedSet && cachedSet.domainMap ? cachedSet.domainMap : null
+    if (!domainMap) {
+        domainMap = compareActive
             ? (soucheCompareActive
                 ? soucheComparison.buildSoucheComparisonDomainMap(visData, visComparisonData, dimsForSplom, overviewOpts)
                 : comparisonDataset.buildComparisonDomainMap(visData, visComparisonData, dimsForSplom, overviewOpts))
             : sploom.getOrComputeSplomDomainMap(visData, dimsForSplom, allDimensions, overviewOpts)
+    }
+
+    if (sameGrid && compareActive) {
+        sploom.invalidateSplomRowsCache("compare data swap")
+        const swapped = sploom.tryUpdateSplomCompareDatasets(splom, visData, visComparisonData, {
+            domainMap: domainMap,
+            primaryLabel: restoreOpts.primaryLabel,
+            comparisonLabel: restoreOpts.comparisonLabel,
+            lowerSouche: restoreOpts.lowerSouche,
+            upperSouche: restoreOpts.upperSouche
+        })
+        if (swapped) {
+            sploom.setCachedDimensionSet(dimSetKey, {
+                dimsForSplom: dimsForSplom.slice(),
+                domainMap: domainMap,
+                cellW: splom.property("__splomCellSize"),
+                familyLayout: familyLayout,
+                compareMode: compareActive
+            })
+            sploom.renderPendingVisibleSplomCells(visData, splom, viewVisitcount, maxSplomAcc)
+            refreshSplomHeatFromVisitCounts()
+            updateMainViewClickCount(mainChartMvX, mainChartMvY)
+            scheduleActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
+            return
+        }
+    }
+
+    if (cachedSet && cachedSet.dimsForSplom && cachedSet.domainMap) {
+        sploom.restoreSplomDimensionSet(cachedSet, visData, splom, sampleData, viewVisitcount, overviewOpts, allDimensions, frontsKey, restoreOpts)
+        cachedSet.familyLayout = familyLayout
+    } else {
         const createOpts = {
             domainMap: domainMap,
             lazyRender: true,
@@ -4618,18 +5852,15 @@ function rebuildSplomWithDimensions(dimsForSplom) {
         })
     }
 
-    // renderPendingVisibleSplomCells already paints visible cells with selection +
-    // heat applied. Avoid a redundant second full redraw here (it doubled startup work).
+    // Visible cells are painted once here — skip a second selection redraw pass.
     sploom.renderPendingVisibleSplomCells(visData, splom, viewVisitcount, maxSplomAcc)
-    refreshSplomAfterSelection(null, true)
     refreshSplomHeatFromVisitCounts()
     updateMainViewClickCount(mainChartMvX, mainChartMvY)
     bindSplomPlotHandlers()
     ensureSplomZoomResetControl()
     installSplomPinchZoom()
-    syncSplomZoomBaseFromLayout()
-    installSplomWheelDebug()
-    updateActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
+    syncSplomZoomBaseFromLayout(true)
+    scheduleActiveSplomCellHighlight(mainChartMvX, mainChartMvY)
     ensureSplomFamilyToolbar()
     } finally {
         endPerf()
@@ -4637,57 +5868,78 @@ function rebuildSplomWithDimensions(dimsForSplom) {
 }
 
 function applySelectedDimensions() {
-    if (hasDimensionFamilies()) {
-        rebuildSplomFromFamilyState()
-        if (setSplomColumnFilterStatus) {
-            const visible = getVisibleSplomDimensions().length
-            if (!visible) {
-                setSplomColumnFilterStatus("Expand one or more family chips in the SPLOM toolbar.", true)
-            } else {
-                setSplomColumnFilterStatus("SPLOM: " + visible + " dimension(s) from expanded families.", false)
-            }
-        }
-        return
+    // Commit checkbox selection as the open SPLOM set. Empty selection clears the filter
+    // so family chips (and all dims) control visibility again.
+    if (selectedColumns.length) {
+        setAppliedSplomDimensions(selectedColumns)
+    } else {
+        appliedSplomDimensions = null
     }
-    if (!selectedColumns.length) {
-        if (setSplomColumnFilterStatus) {
-            setSplomColumnFilterStatus("Showing all dimensions.", false)
-        }
-        rebuildSplomWithDimensions(numericDimensions.slice())
-        refreshTableView()
-        return
-    }
+
     const dims = getVisibleSplomDimensions()
+    updateSplomDimensionFamilyWarnings()
+
     if (!dims.length) {
         if (setSplomColumnFilterStatus) {
-            setSplomColumnFilterStatus("Select at least one dimension.", true)
+            if (hasActiveSplomDimensionFilter()) {
+                setSplomColumnFilterStatus("Select at least one dimension.", true)
+            } else if (hasDimensionFamilies()) {
+                setSplomColumnFilterStatus("Expand one or more family chips in the SPLOM toolbar.", true)
+            } else {
+                setSplomColumnFilterStatus("Select at least one dimension.", true)
+            }
+        }
+        if (hasDimensionFamilies() && !hasActiveSplomDimensionFilter()) {
+            rebuildSplomFromFamilyState()
         }
         return
     }
-    if (dims.length === 1) {
-        if (setSplomColumnFilterStatus) {
+
+    if (setSplomColumnFilterStatus) {
+        if (dims.length === 1) {
             setSplomColumnFilterStatus("One dimension selected — single comparison cell.", false)
+        } else if (hasActiveSplomDimensionFilter()) {
+            let msg = "SPLOM: only " + dims.length + " applied dimension(s)."
+            if (hasDimensionFamilies()) {
+                msg += " Grouped under their family labels."
+            }
+            setSplomColumnFilterStatus(msg, false)
+        } else if (hasDimensionFamilies()) {
+            setSplomColumnFilterStatus("SPLOM: " + dims.length + " dimension(s) from expanded families.", false)
+        } else {
+            setSplomColumnFilterStatus("SPLOM: " + dims.length + " dimensions.", false)
         }
-    } else if (setSplomColumnFilterStatus) {
-        setSplomColumnFilterStatus("SPLOM: " + dims.length + " dimensions.", false)
     }
+
     rebuildSplomWithDimensions(dims)
+    ensureSplomFamilyToolbar()
     refreshTableView()
 }
 
 function resetSplomColumns() {
     selectedColumns = []
-    currentDimensionFamilies = {}
-    expandedFamilies = new Set()
+    appliedSplomDimensions = null
     setFamilyMapWarnings([])
     syncColumnHighlightUI()
+    if (hasDimensionFamilies()) {
+        expandAllFamilies()
+        renderFamilyDimensionPanel()
+        if (setSplomColumnFilterStatus) {
+            setSplomColumnFilterStatus("Column selection cleared — showing all dimensions from families.", false)
+        }
+        if (setFamilyPanelStatus) {
+            setFamilyPanelStatus("Column selection cleared. Families restored — expand or collapse chips above the SPLOM.", false)
+        }
+        rebuildSplomFromFamilyState()
+        return
+    }
     renderFamilyDimensionPanel()
     ensureSplomFamilyToolbar()
     if (setSplomColumnFilterStatus) {
         setSplomColumnFilterStatus("Showing all dimensions.", false)
     }
     if (setFamilyPanelStatus) {
-        setFamilyPanelStatus("Families cleared — showing all dimensions.", false)
+        setFamilyPanelStatus("", false)
     }
     rebuildSplomWithDimensions(numericDimensions.slice())
     refreshTableView()
@@ -4718,7 +5970,14 @@ function toggleFamilyExpanded(familyName) {
     renderFamilyDimensionPanel()
     rebuildSplomFromFamilyState()
     if (setFamilyPanelStatus) {
-        const visible = getVisibleSplomDimensionsFromFamilies().length
+        const visible = getVisibleSplomDimensions().length
+        if (hasActiveSplomDimensionFilter()) {
+            setFamilyPanelStatus(
+                "Applied selection active — SPLOM shows only those " + visible + " dimension(s), labeled by family.",
+                false
+            )
+            return
+        }
         const expandedNames = dimensionFamilies.sortFamilyNames(Array.from(expandedFamilies))
         let msg
         if (!expandedNames.length) {
@@ -4747,7 +6006,7 @@ function setFamilySelection(familyName, checked) {
 }
 
 function setDimensionSelection(dim, checked) {
-    if (!dim || numericDimensions.indexOf(dim) === -1) return
+    if (!dim || allDimensions.indexOf(dim) === -1) return
     const idx = selectedColumns.indexOf(dim)
     if (checked) {
         if (idx === -1) selectedColumns.push(dim)
@@ -4780,20 +6039,33 @@ function createFamilyFromSelected(familyName) {
         }
         return
     }
+
     currentDimensionFamilies[name] = []
     for (let i = 0; i < dims.length; i++) {
         dimensionFamilies.assignDimensionToFamily(currentDimensionFamilies, dims[i], name)
     }
     syncDimensionFamiliesState()
-    expandAllFamilies()
+    expandedFamilies.add(name)
+
+    // Create Family only remembers organization. It does not apply a SPLOM filter
+    // and does not leave those columns checked as if they were "applied".
     selectedColumns = []
     syncColumnHighlightUI()
     renderFamilyDimensionPanel()
-    rebuildSplomFromFamilyState()
+
+    const visible = getVisibleSplomDimensions()
+    updateSplomDimensionFamilyWarnings()
+    rebuildSplomWithDimensions(visible)
+    ensureSplomFamilyToolbar()
+    refreshTableView()
     if (setFamilyPanelStatus) {
-        const visible = getVisibleSplomDimensionsFromFamilies().length
+        const filterActive = hasActiveSplomDimensionFilter()
         setFamilyPanelStatus(
-            'Created family "' + name + '" with ' + dims.length + " dimension(s). All families expanded — SPLOM showing " + visible + " variable(s).",
+            'Created family "' + name + '" with ' + dims.length +
+            " dimension(s). Family remembered" +
+            (filterActive
+                ? " — current applied SPLOM selection unchanged (" + visible.length + " dim(s))."
+                : " — expand family chips to show variables."),
             false
         )
     }
@@ -4860,7 +6132,7 @@ function applyUploadedFamilyMap(familyMap) {
     rebuildSplomFromFamilyState()
     if (setFamilyPanelStatus) {
         const count = Object.keys(dimensionFamilies.familiesForExport(currentDimensionFamilies)).length
-        const visible = getVisibleSplomDimensionsFromFamilies().length
+        const visible = getVisibleSplomDimensions().length
         setFamilyPanelStatus(
             "Loaded " + count + " families (" + visible + " variables visible in SPLOM). Click family chips to expand or collapse.",
             false
@@ -4889,25 +6161,37 @@ function renderFamilyDimensionPanel() {
 
     root.append("div")
         .attr("class", "family-panel-hint")
-        .text("Select dimensions in the table and click Create Family. SPLOM follows expanded family chips only.")
+        .text("Families label and organize dimensions. Apply Selected Dimensions shows only checked columns, grouped under their family names in the SPLOM.")
+
+    const selectionFilter = getSplomDimensionFilter()
 
     familyNames.forEach(function (familyName) {
         const dims = currentDimensionFamilies[familyName] || []
         const expanded = expandedFamilies.has(familyName)
+        const isOthers = dimensionFamilies.isOthersFamily(familyName)
+        const filterSet = selectionFilter ? new Set(selectionFilter) : null
+        const selectedInFamily = filterSet
+            ? dims.filter(function (d) { return filterSet.has(d) })
+            : dims
+        const isPartial = filterSet && selectedInFamily.length > 0 && selectedInFamily.length < dims.length
         const section = root.append("div")
-            .attr("class", "family-group-section" + (dimensionFamilies.isOthersFamily(familyName) ? " is-others" : ""))
+            .attr("class", "family-group-section" + (isOthers ? " is-others" : ""))
 
         const header = section.append("div").attr("class", "family-group-header")
         header.append("span")
             .attr("class", "family-summary-state")
-            .text(expanded ? "shown in SPLOM" : "hidden in SPLOM")
+            .text(hasActiveSplomDimensionFilter()
+                ? (selectedInFamily.length
+                    ? selectedInFamily.length + " of " + dims.length + " applied"
+                    : "none applied")
+                : (expanded ? "shown in SPLOM" : "hidden in SPLOM"))
         header.append("span")
             .attr("class", "family-summary-name")
             .text(familyName)
         header.append("span")
             .attr("class", "family-summary-count")
-            .text("(" + dims.length + ")")
-        if (!dimensionFamilies.isOthersFamily(familyName)) {
+            .text("(" + dims.length + (isPartial ? ", partial" : "") + ")")
+        if (!isOthers) {
             header.append("button")
                 .attr("type", "button")
                 .attr("class", "selection-layer-row-btn remove family-remove-btn")
@@ -4919,13 +6203,18 @@ function renderFamilyDimensionPanel() {
         if (dims.length) {
             const list = section.append("div").attr("class", "family-dim-list")
             dims.forEach(function (dim) {
+                const notApplied = filterSet && !filterSet.has(dim)
                 list.append("div")
-                    .attr("class", "family-dim-item")
+                    .attr("class", "family-dim-item" + (notApplied ? " is-hidden-by-selection" : ""))
                     .attr("data-dim", dim)
-                    .text(dim)
+                    .text(dim + (notApplied ? " (not applied)" : ""))
             })
         }
     })
+
+    if (hasActiveSplomDimensionFilter()) {
+        updateSplomDimensionFamilyWarnings()
+    }
 }
 
 function syncColumnHighlightUI() {
@@ -4965,7 +6254,7 @@ function setupTableDimCheckboxDelegation() {
         const cell = target.closest && (target.closest("th[data-dim]") || target.closest("td[data-dim]"))
         if (!cell) return
         const dim = cell.dataset.dim
-        if (!dim || numericDimensions.indexOf(dim) === -1) return
+        if (!dim || allDimensions.indexOf(dim) === -1) return
 
         setDimensionSelection(dim, selectedColumns.indexOf(dim) === -1)
     })
@@ -5008,7 +6297,11 @@ function hideVispromFloatingTooltip() {
 function formatSplomHoverText(yDim, xDim) {
     const sel = getActiveSelectionLabel()
     let text = "Y: " + yDim + "  ·  X: " + xDim
+    if (columnMetadata.isCategoricalDimension(xDim)) text += " (categorical)"
+    if (columnMetadata.isCategoricalDimension(yDim)) text += " (categorical)"
     if (sel) text += "  ·  Selecting: " + sel
+    const colorBy = columnMetadata.getActiveColorBy()
+    if (colorBy && colorBy !== "selection") text += "  ·  Color by: " + colorBy
     return text
 }
 
@@ -5101,6 +6394,12 @@ function commitSplomCellNavigation(canvasNode) {
     const cellNode = canvasNode.parentNode
     const cellSource = cellNode ? cellNode.getAttribute("data-dataset-source") : null
     const datasetSource = cellSource === "comparison" ? "comparison" : "primary"
+    const triangleSource = cellNode ? cellNode.getAttribute("data-triangle-source") : null
+    if (triangleSource === "lower" || triangleSource === "upper") {
+        lastClickedSplomTriangle = triangleSource
+        // The clicked triangle owns the Main Chart's active group; activateSplomPair renders.
+        setMainChartSelectionMode(triangleSource, { source: "splom-thumbnail", skipRender: true })
+    }
     activateSplomPair(xDim, yDim, datasetSource)
 
     pushViewHistorySnapshot(xDim, yDim, datum)
@@ -5331,26 +6630,11 @@ function openSoucheComparisonInNewTab(xDim, yDim, silent) {
         + encodeURIComponent(comparisonId)
         + "&sessionId=" + encodeURIComponent(sessionId)
 
-    console.log("[Open comparison requested]", {
-        comparisonId: comparisonId,
-        xDim: xDim,
-        yDim: yDim,
-        yeastColumn: yeastColumn,
-        souchesToCompare: souchesToCompare,
-        selectionLayerCount: selectionLayers.length
-    })
-
     const win = window.open(url, "_blank")
-
-    console.log("[Open comparison result]", {
-        comparisonId: comparisonId,
-        url: url,
-        opened: !!win
-    })
 
     if (!win) {
         notifySoucheComparisonIssue(
-            "Pop-up blocked. Allow pop-ups for this site to open Souche comparison.",
+            "Pop-up blocked. Allow pop-ups for this site (localhost) to open Souche comparison.",
             true
         )
         return
@@ -5432,10 +6716,6 @@ function triggerSplomCellDblClick(cellEl, meta) {
     }
     splomCellClickState = {}
     const dims = getSplomCellDimensions(cellEl)
-    console.log("[SPLOM dblclick fired]", Object.assign({
-        xDim: dims.xDim,
-        yDim: dims.yDim
-    }, meta || {}))
     if (!dims.xDim || !dims.yDim) {
         notifySoucheComparisonIssue("Could not read X/Y dimensions from SPLOM cell.", true)
         return
@@ -5755,12 +7035,6 @@ function bindSplomPlotHandlers() {
             showVispromFloatingTooltip(formatSplomHoverText(yDim, xDim), d3.event)
         }
     })
-
-    console.log("[SPLOM dblclick debug]", {
-        cellCount: splom.selectAll(".splom-cell").size(),
-        plotCount: splom.selectAll("canvas.splom-plot").size(),
-        comparisonFnExists: typeof openSoucheComparisonInNewTab === "function"
-    })
 }
 
 function getMainPlotSize() {
@@ -5786,7 +7060,7 @@ function syncMainChartLayout() {
     const yDim = mainChartMvY || mainviewSvg.attr("yDim");
     if (!xDim || !yDim) return;
     const size = getMainPlotSize();
-    scaterplot.chooseDims(size.width, size.height, getMainChartPrimaryData(), xDim, yDim, mainviewSvg, null, getMainChartOverlayOptions());
+    chooseMainChartDims(size.width, size.height, null, xDim, yDim, mainviewSvg, null, getMainChartOverlayOptions());
     updateMainViewClickCount(xDim, yDim);
     updateMainChartBrushLayout(mainviewSvg);
 }
@@ -5885,13 +7159,17 @@ function ensureMainChartHost() {
 function updateMainChart(chartMvX, chartMvY, zoom) {
     return timeBlock("updateMainChart", function () {
         if (!datum || !chartMvX || !chartMvY || !mainviewSvg) return null;
+        if (isMainChartDistributionMode()) {
+            renderMainChartDistributionView()
+            return mainviewSvg
+        }
         mainChartMvX = chartMvX;
         mainChartMvY = chartMvY;
         mvX = chartMvX;
         mvY = chartMvY;
         ensureValidMainChartDimensions();
         const size = getMainPlotSize();
-        scaterplot.chooseDims(size.width, size.height, getMainChartPrimaryData(), mainChartMvX, mainChartMvY, mainviewSvg, zoom || null, getMainChartOverlayOptions());
+        chooseMainChartDims(size.width, size.height, null, mainChartMvX, mainChartMvY, mainviewSvg, zoom || null, getMainChartOverlayOptions());
         return mainviewSvg;
     })
 }
@@ -5987,24 +7265,32 @@ function updateTimeSliderForMainChart() {
     updateTimeSliderUI(currentIndex, xDim)
 }
 
+function splomCellMatchesActivePair(cell, xDim, yDim) {
+    if (!cell || !xDim || !yDim) return false
+    const want = comparisonDataset.getPairKey(xDim, yDim)
+    const key = cell.getAttribute("data-pair-key")
+    if (key && key === want) return true
+    const cx = cell.getAttribute("data-x-dim")
+    const cy = cell.getAttribute("data-y-dim")
+    return !!(cx && cy && comparisonDataset.getPairKey(cx, cy) === want)
+}
+
+function scheduleActiveSplomCellHighlight(xDim, yDim) {
+    const x = xDim || mainChartMvX || mvX
+    const y = yDim || mainChartMvY || mvY
+    updateActiveSplomCellHighlight(x, y)
+    requestAnimationFrame(function () {
+        updateActiveSplomCellHighlight(x, y)
+    })
+}
+
 function updateActiveSplomCellHighlight(xDim, yDim) {
     if (!splom || splom.empty() || !xDim || !yDim) return
-    splom.selectAll(".splom-cell").classed("active-splom-cell", false)
     splom.selectAll(".splom-plot").classed("splom-active", false).classed("splom-hover", false)
-    if (isSplomTriangleCompareActive()) {
-        const pairKey = comparisonDataset.getPairKey(xDim, yDim)
-        splom.selectAll(".splom-cell")
-            .filter(function () { return this.getAttribute("data-pair-key") === pairKey })
-            .classed("active-splom-cell", true)
-        return
-    }
-    const match = splom.selectAll(".splom-cell").filter(function () {
-        const cell = d3.select(this)
-        return cell.attr("data-x-dim") === xDim && cell.attr("data-y-dim") === yDim
-    })
-    if (!match.empty()) {
-        match.classed("active-splom-cell", true)
-    }
+    splom.selectAll(".splom-cell")
+        .classed("active-splom-cell", function () {
+            return splomCellMatchesActivePair(this, xDim, yDim)
+        })
 }
 
 function activateSplomPair(xDim, yDim, sourceDataset, options) {
@@ -6015,6 +7301,11 @@ function activateSplomPair(xDim, yDim, sourceDataset, options) {
     sourceDataset = sourceDataset === "comparison" ? "comparison" : "primary"
     if (!datum || !xDim || !yDim || !mainviewSvg) return
 
+    // Leaving a diagonal distribution view: tear down KDE SVG before scatter redraw.
+    if (mainChartDistributionDim || mainviewSvg.classed("distribution-view")) {
+        clearMainChartDistributionMode({ rerender: false })
+    }
+
     activeDatasetSource = sourceDataset
     mainChartMvX = xDim
     mainChartMvY = yDim
@@ -6023,13 +7314,17 @@ function activateSplomPair(xDim, yDim, sourceDataset, options) {
     ensureValidMainChartDimensions()
 
     const mainPlotSize = getMainPlotSize()
-    scaterplot.chooseDims(mainPlotSize.width, mainPlotSize.height, getMainChartPrimaryData(), mainChartMvX, mainChartMvY, mainviewSvg, null, getMainChartOverlayOptions())
+    chooseMainChartDims(mainPlotSize.width, mainPlotSize.height, null, mainChartMvX, mainChartMvY, mainviewSvg, null, getMainChartOverlayOptions())
+    scheduleMainChartSelectionRepaint()
+    refreshSplomAfterSelection(null, true)
     updateMainViewClickCount(xDim, yDim)
     updateMainChartBrushLayout(mainviewSvg)
-    updateActiveSplomCellHighlight(xDim, yDim)
+    scheduleActiveSplomCellHighlight(xDim, yDim)
     updateTimeSliderForMainChart()
     updateMainChartSoucheNavigator()
+    updateMainChartSelectionModeControl()
     updateMainChartPairTitle()
+    syncDistributionModeChrome()
     if (opts.skipSplomFocus !== true) {
         scheduleSplomFocusOnPair(xDim, yDim, {
             forceFit: !!opts.forceSplomFit,
@@ -6465,13 +7760,20 @@ function initAppWithData(rawData) {
     initStage = "classify_columns"
     const classified = applyDatasetColumnClassification(datum)
     selectedColumns = []
+    appliedSplomDimensions = null
+    if (typeof window.refreshVispromColorByControls === "function") {
+        window.refreshVispromColorByControls()
+    }
     selectedYeastTypes = []
     yeastMode = "overlay"
     soucheTriangleCompareActive = false
     triangleLowerYeast = null
     triangleUpperYeast = null
+    splomViewMode = "category"
+    savedCategoryViewState = null
     mainChartYeastView = "overlay"
     selectionTarget = "active"
+    lastClickedSplomTriangle = null
     availableYeastTypes = []
     currentSoucheIndex = 0
     currentSouche = null
@@ -6517,6 +7819,9 @@ function initAppWithData(rawData) {
     ensureSplomCellNavHandlers()
     sploom.setSplomCellDblClickHandler(function (cellEl) {
         triggerSplomCellDblClick(cellEl, { via: "splom-cell-create" })
+    })
+    sploom.setSplomDiagClickHandler(function (dim) {
+        activateDistributionDim(dim, { source: "splom-diagonal" })
     })
     sploom.setSplomSelectionCheckProvider(isPointInVisibleSplomSelection)
     sploom.setSplomVisitCountKeyProvider(getSplomVisitCountKey)
@@ -6573,7 +7878,11 @@ function initAppWithData(rawData) {
      .attr("height", 50)
      .attr("width", 50)
      .on("click", function(d, i) {
-        savedFavs.push({ "xDim": mainviewSvg.attr("xDim") ,"yDim": mainviewSvg.attr("yDim"), "data": cloneDeep(datum ) })
+        savedFavs.push({
+            xDim: mainviewSvg.attr("xDim"),
+            yDim: mainviewSvg.attr("yDim"),
+            data: null
+        })
         savedFavsEntries.push(saveState("favorite",""))
         updateFavorites(savedFavs)
         pushViewHistorySnapshot()
@@ -6595,9 +7904,21 @@ function initAppWithData(rawData) {
     if (typeof scaterplot.setPointStrokeProvider === "function") {
         scaterplot.setPointStrokeProvider(getPointStrokeForChart)
     }
+    if (typeof scaterplot.setComparisonLegendClickHandler === "function") {
+        scaterplot.setComparisonLegendClickHandler(function (which) {
+            if (!isSoucheCompareModeActive()) return
+            const next = which === "comparison" ? "upper" : "lower"
+            if (getMainChartSelectionMode() === next) {
+                setMainChartSelectionMode("both", { source: "main-chart-legend" })
+                return
+            }
+            setMainChartSelectionMode(next, { source: "main-chart-legend" })
+        })
+    }
     chartRender.setDisplayColorProvider(getPointDisplayColor)
     scaterplot.setRenderMode(mainChartMode)
     ensureMainChartModeControl()
+    ensureMainChartSelectionModeControl()
     ensureMainChartSettingsControls()
     ensureMainChartSoucheNavigator()
     ensureSplomViewControls()
@@ -6670,19 +7991,9 @@ function initAppWithData(rawData) {
     colpick = selectionTableRoot.append("div").attr('id', "colorpicker").attr('class', "popup")
     refreshSelectionExportUI({ immediate: true, full: true })
 
-    selType_buttons = c.select(".groupOp").append('div').style("width",300).append('table').attr('id',"selType_buttons")
-    .attr("width", 300)
-    selectionsTypeChooser(selType_buttons);
-
-    colorOp_buttons = c.select(".colorOp").append('table').attr('id',"colorOp_buttons")
-    colorOp(colorOp_buttons);
-
-    grpAct_buttons  = c.select(".groupOp").append('div').style("width",160).append('table').attr('id',"grpAct_buttons")
-    .attr("width", 160)
-    GroupActionChooser(grpAct_buttons);
-   
-    c.select(".groupOp").style('display','grid')
-    c.select(".groupOp").style('grid-template-columns',"repeat(2, minmax(0, 1fr))" )
+    // Selection mode / color-op / set-op toolbars removed from the Selections panel UI.
+    c.select(".groupOp").style("display", "none")
+    c.select(".colorOp").style("display", "none")
 
     let tableView = c.select(".tableView").append("div")
         .style("resize","horizontal")
@@ -6782,14 +8093,16 @@ function extendData (d, i){
 let appBootStarted = false;
 
 function bootVispromDataLoad() {
-    console.log("[Startup] loading dataset");
     showAppLoader();
     datasetStore.initDatasetSelector(d3.select('.section-bar-dataset'));
     datasetStore.registerDatasetSwitchHandler(promptSaveLogBeforeDatasetSwitch);
+    setComparisonUploadStatus = (typeof window.__vispromSetComparisonUploadStatus === "function")
+        ? window.__vispromSetComparisonUploadStatus
+        : null;
+    window.applyComparisonDatasetUpload = applyComparisonDatasetUpload;
 
     datasetStore.loadDatasetById(datasetStore.getSelectedDatasetId())
         .then(function (rawData) {
-            console.log("[Startup] data length:", rawData && rawData.length);
             try {
                 initAppWithData(rawData);
             } catch (initErr) {
@@ -6818,9 +8131,16 @@ function startVispromApplication() {
 if (typeof window !== 'undefined') {
     window.startVispromApplication = startVispromApplication;
     window.openSoucheComparisonInNewTab = openSoucheComparisonInNewTab;
-    console.log("[Comparison tab function exists]", {
-        exists: typeof openSoucheComparisonInNewTab === "function"
-    });
+    window.vispromSplomTriangleReport = getSoucheTriangleDataReport;
+    window.vispromSplomDimensionReport = getSplomDimensionStateReport;
+    window.vispromIntersectionReport = function () {
+        syncCurrentContextToLayerSouche()
+        return computePairwiseSelectionIntersections().map(function (g) {
+            return { label: g.label, count: g.count, layerIds: g.layerIds }
+        })
+    };
+    window.vispromMainChartSelectionReport = getMainChartSelectionReport;
+    window.vispromSelectionReport = getMainChartSelectionReport;
     if (!window.__vispromUserInitBoot) {
         startVispromApplication();
     }
@@ -6992,6 +8312,25 @@ function stripMainChartBrushPreviewStyles(mv) {
         .style("fill", null)
 }
 
+function getMainChartBrushCoords(mv, d, circleEl) {
+    if (circleEl) {
+        const cx = parseFloat(circleEl.getAttribute("cx"))
+        const cy = parseFloat(circleEl.getAttribute("cy"))
+        if (Number.isFinite(cx) && Number.isFinite(cy)) {
+            return { cx: cx, cy: cy }
+        }
+    }
+    if (typeof scaterplot.getPlotScreenCoords === "function") {
+        return scaterplot.getPlotScreenCoords(d, mv)
+    }
+    const x = mv.scalex
+    const y = mv.scaley
+    const xcol = mv.xcol
+    const ycol = mv.ycol
+    if (!x || !y || !xcol || !ycol || !d) return { cx: NaN, cy: NaN }
+    return { cx: x(d[xcol]), cy: y(d[ycol]) }
+}
+
 function collectBrushPreviewIds(mv, extent) {
     const previewIds = new Set()
     if (!mv || mv.empty() || !extent) return previewIds
@@ -7005,25 +8344,40 @@ function collectBrushPreviewIds(mv, extent) {
     if (!circles.empty()) {
         circles.each(function (d) {
             if (!d || d.visibility === false) return
-            const cx = x(d[xcol])
-            const cy = y(d[ycol])
-            if (!Number.isFinite(cx) || !Number.isFinite(cy)) return
-            if (isBrushed(extent, cx, cy, null, d)) {
+            if (!isRowEligibleForSelection(d)) return
+            const coords = getMainChartBrushCoords(mv, d, this)
+            if (!Number.isFinite(coords.cx) || !Number.isFinite(coords.cy)) return
+            if (isBrushed(extent, coords.cx, coords.cy, null, d)) {
                 if (d.id != null) previewIds.add(d.id)
                 if (d.__rowId != null) previewIds.add(d.__rowId)
             }
         })
-        return previewIds
     }
+
+    const compareMarks = mv.selectAll(".plot-points-compare path, .plot-points-compare-selected path")
+    if (!compareMarks.empty()) {
+        compareMarks.each(function (d) {
+            if (!d || d.visibility === false) return
+            if (!isRowEligibleForSelection(d)) return
+            const coords = getMainChartBrushCoords(mv, d, null)
+            if (!Number.isFinite(coords.cx) || !Number.isFinite(coords.cy)) return
+            if (isBrushed(extent, coords.cx, coords.cy, null, d)) {
+                if (d.id != null) previewIds.add(d.id)
+                if (d.__rowId != null) previewIds.add(d.__rowId)
+            }
+        })
+    }
+
+    if (previewIds.size) return previewIds
 
     const brushData = getMainChartSelectionDataset()
     for (let i = 0; i < brushData.length; i++) {
         const d = brushData[i]
         if (!d || !d.visibility) continue
-        const cx = x(d[xcol])
-        const cy = y(d[ycol])
-        if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue
-        if (isBrushed(extent, cx, cy, null, d)) {
+        if (!isRowEligibleForSelection(d)) continue
+        const coords = getMainChartBrushCoords(mv, d, null)
+        if (!Number.isFinite(coords.cx) || !Number.isFinite(coords.cy)) continue
+        if (isBrushed(extent, coords.cx, coords.cy, null, d)) {
             if (d.id != null) previewIds.add(d.id)
             if (d.__rowId != null) previewIds.add(d.__rowId)
         }
@@ -7109,6 +8463,12 @@ function previewMainChartBrushImmediate(mv, extent) {
             const base = getPointDisplayColor(d)
             return base && base.string ? base.string : null
         })
+    mv.selectAll(".plot-points-compare path, .plot-points-compare-selected path")
+        .attr("stroke", function (d) {
+            if (inPreview(d)) return previewColor
+            return this.getAttribute("stroke")
+        })
+    refreshSplomAfterSelection(previewIds, true)
 }
 
 function scheduleMainChartBrushPreview(mv, extent) {
@@ -7189,6 +8549,10 @@ function onMainChartBrushEnd(mv) {
 
 function reinstallMainChartBrush(mv) {
     if (!mv || mv.empty()) return
+    if (isMainChartDistributionMode()) {
+        mv.selectAll(".brush").remove()
+        return
+    }
     const brush = d3.brush()
     setStoredMainChartBrush(mv, brush)
     mv.selectAll(".brush").remove()
@@ -7231,6 +8595,10 @@ function reinstallMainChartBrush(mv) {
 
 function updateMainChartBrushLayout(mv) {
     if (!mv || mv.empty()) return
+    if (isMainChartDistributionMode()) {
+        mv.selectAll(".brush").remove()
+        return
+    }
     const brush = getStoredMainChartBrush(mv)
     if (!brush || mv.select(".brush").empty()) {
         reinstallMainChartBrush(mv)
@@ -7245,38 +8613,357 @@ function addbrush(mv) {
 }
 
 function initViewHistory(viewHistory){
-    //console.lag(viewHistory)
 
     history.append("div").text("History")
-   
-    historySvg3 = history.append("svg").attr("class", "historyView");
-    scaterplot.init(historySvg3)
-    
-    historySvg2 = history.append("svg").attr("class", "historyView");
-    scaterplot.init(historySvg2)
 
-    historySvg = history.append("svg").attr("class", "historyView");
-    scaterplot.init(historySvg)
-
-    scaterplot.chooseDimsSmall(80,80,[],"","", historySvg3);
-    scaterplot.chooseDimsSmall(80,80,[],"","", historySvg2);
-    scaterplot.chooseDimsSmall(80,80,[],"","", historySvg);
+    historyIconsRoot = history.append("div").attr("class", "history-icons")
 
 }
 
+
+function getRowIdsFromLayerContent(layer) {
+    const ids = []
+    if (!layer || !layer.content) return ids
+    layer.content.forEach(function (d) {
+        if (!d) return
+        const rid = d.__rowId != null ? d.__rowId : d.id
+        if (rid != null) ids.push(rid)
+    })
+    return ids
+}
+
+function collectSavedLayerRowIds(saved) {
+    const ids = []
+    const seen = new Set()
+    function add(id) {
+        if (id == null || id === "") return
+        const key = String(id)
+        if (seen.has(key)) return
+        seen.add(key)
+        ids.push(id)
+    }
+    if (!saved) return ids
+    ;(saved.rowIds || []).forEach(add)
+    Object.keys(saved.selectionsBySouche || {}).forEach(function (sk) {
+        ;(saved.selectionsBySouche[sk] || []).forEach(add)
+    })
+    ;(saved.points || []).forEach(add)
+    return ids
+}
+
+function resolveRowFromSavedId(id) {
+    if (id == null || !datum) return null
+    if (rowById) {
+        if (rowById.get(id)) return rowById.get(id)
+        const asNum = Number(id)
+        if (Number.isFinite(asNum) && rowById.get(asNum)) return rowById.get(asNum)
+        if (rowById.get(String(id))) return rowById.get(String(id))
+    }
+    const idx = Number(id)
+    if (Number.isFinite(idx) && datum[idx]) return datum[idx]
+    return null
+}
+
+function humanizeHistoryAction(name) {
+    const labels = {
+        history_snapshot: "Step",
+        change_view: "Changed view",
+        brush_selection: "Lasso / brush",
+        density_contour_selection: "Contour selection",
+        favorite: "Favorite",
+        favorite_add: "Saved favorite",
+        add_selection_layer: "New selection",
+        clear_selection_layer: "Cleared a selection",
+        clear_all_selections: "Cleared selections",
+        add_color: "Added selection color",
+        remove_color: "Removed selection",
+        load_favorite_state: "Opened favorite",
+        groupOp_union: "Union",
+        groupOp_intersection: "Intersection",
+        groupOp_difference: "Difference",
+        export_snapshot: "Snapshot"
+    }
+    return labels[name] || (name ? String(name).replace(/_/g, " ") : "Step")
+}
+
+function describeSavedState(state, xDim, yDim) {
+    if (!state) {
+        return ((xDim || "?") + " × " + (yDim || "?"))
+    }
+    const parts = [humanizeHistoryAction(state.actName)]
+    const x = xDim || state.mvX || (state.session && state.session.currentPair && state.session.currentPair.xDim)
+    const y = yDim || state.mvY || (state.session && state.session.currentPair && state.session.currentPair.yDim)
+    if (x && y) parts.push(x + " × " + y)
+    const session = state.session || {}
+    if (session.triangleLowerYeast && session.triangleUpperYeast) {
+        parts.push(session.triangleLowerYeast + " vs " + session.triangleUpperYeast)
+    }
+    const selBits = []
+    Object.keys(state.selections || {}).forEach(function (cname) {
+        if (cname === "Blue") return
+        const saved = state.selections[cname]
+        const n = collectSavedLayerRowIds(saved).length
+        if (!n) return
+        selBits.push((saved.label || saved.dispName || cname) + " " + n)
+    })
+    if (selBits.length) parts.push(selBits.join(", "))
+    const active = (state.currentColor || []).filter(function (c) { return c && c !== "Blue" })
+    if (active.length) parts.push("active " + active.join(", "))
+    if (session.selectionTarget && session.selectionTarget !== "both") {
+        parts.push("mode " + session.selectionTarget)
+    }
+    return parts.join(" · ")
+}
+
+function findLayerColorByCname(cname) {
+    const pool = (selections || []).concat(reserve || [])
+    for (let i = 0; i < pool.length; i++) {
+        if (pool[i] && pool[i].cname === cname) return pool[i].color
+    }
+    return null
+}
+
+function buildHistoryPreviewRows(state, xDim, yDim) {
+    if (!datum || !xDim || !yDim) return datum
+    const colorById = {}
+    Object.keys((state && state.selections) || {}).forEach(function (cname) {
+        if (cname === "Blue") return
+        const saved = state.selections[cname]
+        const color = findLayerColorByCname(cname)
+        if (!color) return
+        collectSavedLayerRowIds(saved).forEach(function (id) {
+            colorById[String(id)] = color
+        })
+    })
+    const session = state && state.session
+    let sourceRows = datum
+    if (session) {
+        if (session.splomViewMode === "full") {
+            sourceRows = datum
+        } else if (session.soucheTriangleCompareActive && session.triangleLowerYeast) {
+            const lower = getRowsForSouche(session.triangleLowerYeast)
+            const upper = session.triangleUpperYeast ? getRowsForSouche(session.triangleUpperYeast) : []
+            sourceRows = lower.length ? (upper.length ? lower.concat(upper) : lower.slice()) : upper.slice()
+        } else if (session.selectedYeastTypes && session.selectedYeastTypes.length === 1) {
+            sourceRows = getRowsForSouche(session.selectedYeastTypes[0])
+        } else if (session.currentSouche) {
+            sourceRows = getRowsForSouche(session.currentSouche)
+        }
+    }
+    const rows = []
+    const maxPts = 800
+    const step = sourceRows.length > maxPts ? Math.ceil(sourceRows.length / maxPts) : 1
+    for (let i = 0; i < sourceRows.length; i += step) {
+        const d = sourceRows[i]
+        if (!d) continue
+        const rid = d.__rowId != null ? d.__rowId : d.id
+        const snapColor = rid != null ? colorById[String(rid)] : null
+        rows.push({
+            id: d.id,
+            __rowId: d.__rowId,
+            visibility: true,
+            color: snapColor ? new Set([snapColor]) : new Set(),
+            [xDim]: d[xDim],
+            [yDim]: d[yDim]
+        })
+    }
+    return rows
+}
+
+function ensureHistoryFavoritesSettingsDefaults() {
+    if (typeof window === "undefined") return
+    if (!window.__vispromMainChartSettings) {
+        window.__vispromMainChartSettings = {
+            selections: 10,
+            contourLevels: 8,
+            historySize: 6,
+            favoritesSize: 6
+        }
+        return
+    }
+    const s = window.__vispromMainChartSettings
+    if (!Number.isFinite(s.historySize)) s.historySize = 6
+    if (!Number.isFinite(s.favoritesSize)) s.favoritesSize = 6
+}
+
+function renderHistoryThumb(container, xDim, yDim, state, onClick, caption, options) {
+    const opts = options || {}
+    const wrap = opts.prepend
+        ? container.insert("div", ":first-child").attr("class", "history-entry")
+        : container.append("div").attr("class", "history-entry")
+    if (opts.animateEnter) wrap.classed("history-entry--enter", true)
+    if (opts.historyIdx != null) wrap.attr("data-history-idx", String(opts.historyIdx))
+    if (opts.offsetFromEnd != null) wrap.attr("data-offset-from-end", String(opts.offsetFromEnd))
+    // Keep a short hover hint only (no caption text under the thumb).
+    if (xDim && yDim) wrap.attr("title", xDim + " × " + yDim)
+    const entrySvg = wrap.append("svg").attr("class", "historyView")
+    scaterplot.init(entrySvg)
+    scaterplot.chooseDimsSmall(80, 80, buildHistoryPreviewRows(state, xDim, yDim), xDim, yDim, entrySvg)
+    wrap.style("cursor", "pointer")
+    wrap.on("click", onClick)
+    return wrap
+}
 
 function pushViewHistorySnapshot(xDim, yDim, dataSnapshot) {
     if (!mainviewSvg) return
     const x = xDim || mainviewSvg.attr("xDim")
     const y = yDim || mainviewSvg.attr("yDim")
     if (!x || !y) return
-    const snapData = dataSnapshot || datum
+    const state = saveState("history_snapshot", "")
     viewHistory.push({
+        id: "h" + Date.now() + "_" + viewHistory.length,
         xDim: x,
         yDim: y,
-        data: cloneDeep(snapData),
-        state: saveState("history_snapshot", "")
+        data: null,
+        state: state,
+        summary: describeSavedState(state, x, y)
     })
+    const maxKeep = Math.max(20, getHistoryMaxItems() * 3)
+    if (viewHistory.length > maxKeep) {
+        viewHistory.splice(0, viewHistory.length - maxKeep)
+    }
+}
+
+function getHistoryMaxItems() {
+    ensureHistoryFavoritesSettingsDefaults()
+    const s = (typeof window !== "undefined") ? window.__vispromMainChartSettings : null
+    if (s && Number.isFinite(s.historySize)) return Math.max(1, Math.floor(s.historySize))
+    try {
+        const inp = document.getElementById("mainChartSettingsHistorySizeInput")
+        if (inp) {
+            const n = parseInt(inp.value, 10)
+            if (Number.isFinite(n)) return Math.max(1, Math.floor(n))
+        }
+    } catch (e) { /* ignore */ }
+    return 6
+}
+
+function getFavoritesMaxItems() {
+    ensureHistoryFavoritesSettingsDefaults()
+    const s = (typeof window !== "undefined") ? window.__vispromMainChartSettings : null
+    if (s && Number.isFinite(s.favoritesSize)) return Math.max(1, Math.floor(s.favoritesSize))
+    try {
+        const inp = document.getElementById("mainChartSettingsFavoritesSizeInput")
+        if (inp) {
+            const n = parseInt(inp.value, 10)
+            if (Number.isFinite(n)) return Math.max(1, Math.floor(n))
+        }
+    } catch (e) { /* ignore */ }
+    return 6
+}
+
+function extractSavedViewDims(savedView) {
+    if (!savedView) return { xDim: null, yDim: null }
+    const xDim = savedView.xDim || savedView.mvX || null
+    const yDim = savedView.yDim || savedView.mvY || null
+    return { xDim, yDim }
+}
+
+function ensureSavedViewDimsVisibleInSplom(xDim, yDim, options) {
+    const opts = options || {}
+    const visibleBefore = getVisibleSplomDimensions()
+    const hiddenDims = [xDim, yDim].filter(function (d) { return d && visibleBefore.indexOf(d) === -1 })
+    if (!hiddenDims.length) return { ok: true, hiddenDims: [] }
+
+    if (hasDimensionFamilies()) {
+        const familiesMissing = Array.from(new Set(hiddenDims.map(function (d) {
+            return dimensionFamilies.getFamilyForDimension(currentDimensionFamilies, d)
+        }).filter(Boolean))).filter(function (f) {
+            return !expandedFamilies.has(f)
+        })
+
+        const msg = "This saved view uses dimensions that are currently hidden. Show them in the SPLOM?"
+        if (familiesMissing.length) {
+            const ok = window.confirm(msg)
+            if (!ok) return { ok: false, hiddenDims: hiddenDims, hiddenFamilies: familiesMissing, cancelled: true }
+            familiesMissing.forEach(function (f) { expandedFamilies.add(f) })
+            rebuildSplomFromFamilyState()
+        }
+
+        const visibleAfter = getVisibleSplomDimensions()
+        const stillHidden = hiddenDims.filter(function (d) { return visibleAfter.indexOf(d) === -1 })
+        if (stillHidden.length) {
+            const addMsg = "This saved view uses dimensions that are not currently visible in the SPLOM. Would you like to add them back?"
+            window.alert(addMsg)
+            return { ok: false, hiddenDims: stillHidden, hiddenFamilies: familiesMissing }
+        }
+
+        return { ok: true, hiddenDims: hiddenDims, hiddenFamilies: familiesMissing }
+    }
+
+    if (selectedColumns && selectedColumns.length) {
+        const msg = "This saved view uses dimensions that are not currently visible in the SPLOM. Would you like to add them back?"
+        const ok = window.confirm(msg)
+        if (!ok) return { ok: false, hiddenDims: hiddenDims, cancelled: true }
+
+        hiddenDims.forEach(function (d) {
+            if (numericDimensions.indexOf(d) === -1) return
+            setDimensionSelection(d, true)
+        })
+        syncColumnHighlightUI()
+        rebuildSplomWithDimensions(getVisibleSplomDimensions())
+        refreshTableView()
+
+        const visibleAfter = getVisibleSplomDimensions()
+        const stillHidden = hiddenDims.filter(function (d) { return visibleAfter.indexOf(d) === -1 })
+        if (stillHidden.length) {
+            window.alert(msg)
+            return { ok: false, hiddenDims: stillHidden }
+        }
+
+        return { ok: true, hiddenDims: hiddenDims }
+    }
+
+    const msg = "This saved view uses dimensions that are not currently visible in the SPLOM. Would you like to add them back?"
+    window.alert(msg)
+    return { ok: false, hiddenDims: hiddenDims, cancelled: true }
+}
+
+// Shared restore for History and Favorites navigation inside the SPLOM.
+function restoreSavedView(savedView, options) {
+    const opts = options || {}
+    const from = opts.sourceName || opts.from || "saved-view"
+    const source = opts.source || activeDatasetSource
+    const { xDim, yDim } = extractSavedViewDims(savedView)
+
+    if (!xDim || !yDim) {
+        console.warn("[restoreSavedView] Missing x/y dims", { from, savedView })
+        return false
+    }
+
+    const missingInDataset = [xDim, yDim].filter(function (d) {
+        return d && numericDimensions.indexOf(d) === -1
+    })
+    if (missingInDataset.length) {
+        window.alert("This saved view cannot be restored because these dimensions are not in the current dataset: " + missingInDataset.join(", "))
+        return false
+    }
+
+    const ensureRes = ensureSavedViewDimsVisibleInSplom(xDim, yDim, { source })
+    if (!ensureRes.ok) {
+        return false
+    }
+
+    const forceSplomFit = !!opts.forceSplomFit
+    const skipMainChartUpdate = !!opts.skipMainChartUpdate
+
+    if (!skipMainChartUpdate) {
+        activateSplomPair(xDim, yDim, source, {
+            forceSplomFit: forceSplomFit,
+            skipSplomFocus: true
+        })
+        scaterplot.updatePointsAfterSelection(getMainChartPrimaryData(), mainviewSvg)
+        refreshSplomAfterSelection(null, true)
+    } else {
+        scheduleActiveSplomCellHighlight(xDim, yDim)
+    }
+
+    requestAnimationFrame(function () {
+        scheduleActiveSplomCellHighlight(xDim, yDim)
+        scheduleSplomFocusOnPair(xDim, yDim, { forceFit: forceSplomFit })
+    })
+
+    return true
 }
 
 function loadHistoryEntryByOffset(offsetFromEnd) {
@@ -7292,9 +8979,11 @@ function loadHistoryEntryByOffset(offsetFromEnd) {
         return
     }
     if (entry.xDim && entry.yDim) {
-        activateSplomPair(entry.xDim, entry.yDim, activeDatasetSource, { forceSplomFit: isSplomTriangleCompareActive() })
-        scaterplot.updatePointsAfterSelection(getMainChartPrimaryData(), mainviewSvg)
-        refreshSplomAfterSelection(null, true)
+        restoreSavedView(entry, {
+            from: "history",
+            source: activeDatasetSource,
+            forceSplomFit: isSplomTriangleCompareActive()
+        })
         return
     }
     const fallback = savedEntries[savedEntries.length - offsetFromEnd]
@@ -7303,196 +8992,149 @@ function loadHistoryEntryByOffset(offsetFromEnd) {
     }
 }
 
-function updateViewHistory(viewHistory){
-    // console.log("AFTER CHECK")
-    // console.log(viewHistory) 
-    // console.log(savedEntries) 
-    // console.log("#######################")
-
-    if(viewHistory.length>2){
-        scaterplot.chooseDimsSmall(80,80,viewHistory[viewHistory.length-3].data,viewHistory[viewHistory.length-3].xDim,viewHistory[viewHistory.length-3].yDim, historySvg3);
-        historySvg3.style("cursor", "pointer")
-        historySvg3.on("click", function() {
-            loadHistoryEntryByOffset(3)
-        });
-    }
-    if(viewHistory.length>1){
-        scaterplot.chooseDimsSmall(80,80,viewHistory[viewHistory.length-2].data,viewHistory[viewHistory.length-2].xDim,viewHistory[viewHistory.length-2].yDim, historySvg2);
-        historySvg2.style("cursor", "pointer")
-        historySvg2.on("click", function() {
-            loadHistoryEntryByOffset(2)
-        }); 
-    }
-    if(viewHistory.length>0){
-        scaterplot.chooseDimsSmall(80,80,viewHistory[viewHistory.length-1].data,viewHistory[viewHistory.length-1].xDim,viewHistory[viewHistory.length-1].yDim, historySvg);
-        historySvg.style("cursor", "pointer")
-        historySvg.on("click", function() {
-            loadHistoryEntryByOffset(1)
-        });
-    };
-        
-    
-
+function rebindHistoryThumbClicks() {
+    if (!historyIconsRoot) return
+    historyIconsRoot.selectAll(".history-entry").each(function (d, i) {
+        const offsetFromEnd = i + 1
+        d3.select(this)
+            .attr("data-offset-from-end", String(offsetFromEnd))
+            .on("click", function () {
+                loadHistoryEntryByOffset(offsetFromEnd)
+            })
+    })
 }
 
-function updateFavorites(savedFavs){
-    //console.lag(viewHistory)
+function updateViewHistory(viewHistory, options) {
+    const opts = options || {}
+    if (!historyIconsRoot) return
+
+    const maxItems = getHistoryMaxItems()
+    const count = Math.min(maxItems, viewHistory.length)
+    const rootNode = historyIconsRoot.node()
+    const existing = rootNode ? Array.from(rootNode.querySelectorAll(":scope > .history-entry")) : []
+    const existingIdxs = existing.map(function (el) { return el.getAttribute("data-history-idx") })
+
+    // Newest first: abs indices [len-1, len-2, ...]
+    const desired = []
+    for (let i = 0; i < count; i++) {
+        const absIdx = viewHistory.length - 1 - i
+        desired.push({
+            absIdx: absIdx,
+            offsetFromEnd: i + 1,
+            entry: viewHistory[absIdx]
+        })
+    }
+    const desiredIdxs = desired.map(function (d) { return String(d.absIdx) })
+
+    // Smooth path: one new newest item prepended, older thumbs shift back.
+    const canPrepend =
+        !opts.forceRebuild &&
+        desired.length > 0 &&
+        existingIdxs.length > 0 &&
+        desiredIdxs[0] !== existingIdxs[0] &&
+        desiredIdxs.slice(1).every(function (k, i) { return k === existingIdxs[i] })
+
+    if (canPrepend) {
+        const d0 = desired[0]
+        if (!d0 || !d0.entry) return
+        existing.forEach(function (el) {
+            el.classList.remove("history-entry--enter")
+            el.classList.add("history-entry--shift")
+        })
+        renderHistoryThumb(
+            historyIconsRoot,
+            d0.entry.xDim,
+            d0.entry.yDim,
+            d0.entry.state,
+            function () { loadHistoryEntryByOffset(1) },
+            null,
+            {
+                prepend: true,
+                animateEnter: true,
+                historyIdx: d0.absIdx,
+                offsetFromEnd: 1
+            }
+        )
+        // Drop overflow from the end with a short exit animation.
+        const all = Array.from(rootNode.querySelectorAll(":scope > .history-entry"))
+        for (let i = maxItems; i < all.length; i++) {
+            const el = all[i]
+            el.classList.add("history-entry--exit")
+            el.style.pointerEvents = "none"
+            setTimeout(function () {
+                if (el && el.parentNode) el.parentNode.removeChild(el)
+            }, 220)
+        }
+        rebindHistoryThumbClicks()
+        return
+    }
+
+    // Full rebuild (settings change, restore, first paint).
+    historyIconsRoot.html("")
+    for (let i = 0; i < desired.length; i++) {
+        const d = desired[i]
+        if (!d || !d.entry) continue
+        renderHistoryThumb(
+            historyIconsRoot,
+            d.entry.xDim,
+            d.entry.yDim,
+            d.entry.state,
+            function () { loadHistoryEntryByOffset(d.offsetFromEnd) },
+            null,
+            {
+                animateEnter: !!opts.animateEnter && i === 0,
+                historyIdx: d.absIdx,
+                offsetFromEnd: d.offsetFromEnd
+            }
+        )
+    }
+}
+
+function updateFavorites(savedFavs) {
+    if (!favorites) return
 
     favorites.html("")
-    favorites.append("div")
     favorites.append("div").text("Favorites")
+    const favoritesIconsRoot = favorites.append("div").attr("class", "history-icons")
 
-    if(savedFavs.length>4){
-        let favSvg3 = favorites.append("svg").attr("class", "favorites");
-        scaterplot.init(favSvg3)
-        scaterplot.chooseDimsSmall(80,80,savedFavs[savedFavs.length-5].data,savedFavs[savedFavs.length-5].xDim,savedFavs[savedFavs.length-5].yDim, favSvg3);
+    const maxItems = getFavoritesMaxItems()
+    const total = savedFavs.length || 0
+    const count = Math.min(maxItems, total)
+    if (!count) return
 
-        favSvg3.on("click", function(d, i) {
-            loadState(savedFavsEntries[savedFavsEntries.length-5], { preserveFavorites: true })
+    // Newest favorites first.
+    for (let i = 0; i < count; i++) {
+        const favIdx = total - 1 - i
+        const fav = savedFavs[favIdx]
+        const favState = savedFavsEntries[favIdx]
+        if (!fav || !favState) continue
 
-            //LOGGING HISTORY
-            //DONE
+        renderHistoryThumb(favoritesIconsRoot, fav.xDim, fav.yDim, favState, function () {
+            loadState(favState, {
+                preserveFavorites: true,
+                historyDims: { xDim: fav.xDim, yDim: fav.yDim }
+            })
+
             pushViewHistorySnapshot()
-            setTimeout( ()=>{
-                updateViewHistory(viewHistory)
-                },0 )
+            setTimeout(function () {
+                updateViewHistory(viewHistory, { animateEnter: true })
+            }, 0)
 
-            let log =  {nameAction :"load_favorite_state", callparam: {xDim: mainviewSvg.attr("xDim") , yDim: mainviewSvg.attr("yDim")}, data : datum, timestamp : Date.now()} 
-            let svState = saveState("load_favorite_state","")
+            let log = { nameAction: "load_favorite_state", callparam: { xDim: mainviewSvg.attr("xDim"), yDim: mainviewSvg.attr("yDim") }, data: datum, timestamp: Date.now() }
+            let svState = saveState("load_favorite_state", "")
             savedEntries.push(svState)
-            if(onlineLogActive){
+            if (onlineLogActive) {
                 firebase.save(svState, globalLoss, userId)
             }
-            
-            finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-            cache = []     
-            ///////////
 
-
-        });
+            finalLog.push(JSON.stringify(log, Set_toJSON))
+            cache = []
+        }, null, {
+            animateEnter: i === 0,
+            historyIdx: favIdx
+        })
     }
-
-    if(savedFavs.length>3){
-        let favSvg3 = favorites.append("svg").attr("class", "favorites");
-        scaterplot.init(favSvg3)
-        scaterplot.chooseDimsSmall(80,80,savedFavs[savedFavs.length-4].data,savedFavs[savedFavs.length-4].xDim,savedFavs[savedFavs.length-4].yDim, favSvg3);
-
-        favSvg3.on("click", function(d, i) {
-            loadState(savedFavsEntries[savedFavsEntries.length-4], { preserveFavorites: true })
-
-            //LOGGING HISTORY
-            //DONE
-            pushViewHistorySnapshot()
-            setTimeout( ()=>{
-                updateViewHistory(viewHistory)
-                },0 )
-
-            let log =  {nameAction :"load_favorite_state", callparam: {xDim: mainviewSvg.attr("xDim") , yDim: mainviewSvg.attr("yDim")}, data : datum, timestamp : Date.now()} 
-            let svState = saveState("load_favorite_state","")
-            savedEntries.push(svState)
-            if(onlineLogActive){
-                firebase.save(svState, globalLoss, userId)
-            }
-            
-            finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-            cache = []     
-            ///////////
-
-
-        });
-    }
-
-    if(savedFavs.length>2){
-        let favSvg3 = favorites.append("svg").attr("class", "favorites");
-        scaterplot.init(favSvg3)
-        scaterplot.chooseDimsSmall(80,80,savedFavs[savedFavs.length-3].data,savedFavs[savedFavs.length-3].xDim,savedFavs[savedFavs.length-3].yDim, favSvg3);
-
-        favSvg3.on("click", function(d, i) {
-            loadState(savedFavsEntries[savedFavsEntries.length-3], { preserveFavorites: true })
-
-            //LOGGING HISTORY
-            //DONE
-            pushViewHistorySnapshot()
-            setTimeout( ()=>{
-                updateViewHistory(viewHistory)
-                },0 )
-
-            let log =  {nameAction :"load_favorite_state", callparam: {xDim: mainviewSvg.attr("xDim") , yDim: mainviewSvg.attr("yDim")}, data : datum, timestamp : Date.now()} 
-            let svState = saveState("load_favorite_state","")
-            savedEntries.push(svState)
-            if(onlineLogActive){
-                firebase.save(svState, globalLoss, userId)
-            }
-            
-            finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-            cache = []     
-            ///////////
-
-
-        });
-    }
-    if(savedFavs.length>1){
-        let favSvg2 = favorites.append("svg").attr("class", "favorites");
-        scaterplot.init(favSvg2)
-        scaterplot.chooseDimsSmall(80,80,savedFavs[savedFavs.length-2].data,savedFavs[savedFavs.length-2].xDim,savedFavs[savedFavs.length-2].yDim, favSvg2);
-
-        favSvg2.on("click", function(d, i) {
-            loadState(savedFavsEntries[savedFavsEntries.length-2], { preserveFavorites: true })
-
-             //LOGGING HISTORY
-            //DONE
-            pushViewHistorySnapshot()
-            setTimeout( ()=>{
-                updateViewHistory(viewHistory)
-                },0 )
-
-            let log =  {nameAction :"load_favorite_state", callparam: {xDim: mainviewSvg.attr("xDim") , yDim: mainviewSvg.attr("yDim")}, data : datum, timestamp : Date.now()} 
-            let svState = saveState("load_favorite_state","")
-            savedEntries.push(svState)
-            if(onlineLogActive){
-                firebase.save(svState, globalLoss, userId)
-            }
-            
-            finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-            cache = []     
-            ///////////
-
-        });
-    }
-    if(savedFavs.length>0){
-        let favSvg = favorites.append("svg").attr("class", "favorites");
-        scaterplot.init(favSvg)
-        scaterplot.chooseDimsSmall(80,80,savedFavs[savedFavs.length-1].data,savedFavs[savedFavs.length-1].xDim,savedFavs[savedFavs.length-1].yDim, favSvg);
-
-        favSvg.on("click", function(d, i) {
-            loadState(savedFavsEntries[savedFavsEntries.length-1], { preserveFavorites: true })
-
-             //LOGGING HISTORY
-            //DONE
-            pushViewHistorySnapshot()
-            setTimeout( ()=>{
-                updateViewHistory(viewHistory)
-                },0 )
-
-            let log =  {nameAction :"load_favorite_state", callparam: {xDim: mainviewSvg.attr("xDim") , yDim: mainviewSvg.attr("yDim")}, data : datum, timestamp : Date.now()} 
-            let svState = saveState("load_favorite_state","")
-            savedEntries.push(svState)
-            if(onlineLogActive){
-                firebase.save(svState, globalLoss, userId)
-            }
-            
-            finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-            cache = []     
-            ///////////
-
-
-        });
-    };
-        
 }
-
-
-
 
 function applySelectionMembership(isPointSelected) {
     return timeBlock("applySelectionMembership", function () {
@@ -7503,22 +9145,25 @@ function applySelectionMembership(isPointSelected) {
         const activeLayer = current_color[0]
 
         for (let i = 0; i < selectionData.length; i++) {
-            const d = selectionData[i]
-            if (!d.visibility) continue
-            const inBrush = isPointSelected(d)
+            const d = getCanonicalSelectionRow(selectionData[i])
+            if (!d || !d.visibility) continue
+            if (!isRowEligibleForSelection(d)) continue
+            const inBrush = isPointSelected(d) || isPointSelected(selectionData[i])
 
             if (current_selectionType === 1) {
+                // Additive: a point can belong to multiple selection layers (overlaps).
                 if (inBrush) {
                     addPointToSelectionLayer(activeLayer, d)
-                } else if (activeLayer.content.has(d)) {
+                } else if (layerOwnsPoint(activeLayer, d)) {
                     removePointFromSelectionLayer(activeLayer, d)
                 }
             } else if (current_selectionType === 2) {
+                // Additive append — do not strip other layer memberships.
                 if (inBrush) {
                     addPointToSelectionLayer(activeLayer, d)
                 }
             } else if (current_selectionType === 3) {
-                if (inBrush && activeLayer.content.has(d)) {
+                if (inBrush && layerOwnsPoint(activeLayer, d)) {
                     removePointFromSelectionLayer(activeLayer, d)
                 }
             }
@@ -7541,8 +9186,9 @@ function finalizeActiveSelectionChange(logActionName, callparam) {
         timestamp: Date.now()
     }
 
-    requestSelectionRestyle()
-    rebuildColoredSelectionContentFromSoucheKeys()
+    rebuildColoredSelectionContentFromSoucheKeys({ skipViewRefresh: true })
+    refreshViewsAfterLayerSelectionChange()
+    syncSelectionCountsAfterChange()
 
     setTimeout(function () {
         scheduleSelectionExportOverlapRefresh()
@@ -7577,7 +9223,7 @@ function applyDensityContourSelectionAtPoint(px, py) {
     if (!hit || !hit.polygon) return false
 
     const selectedPoints = scaterplot.getPointsInsidePolygonComponent(
-        datum, mainviewSvg, hit.polygon
+        getMainChartSelectionDataset(), mainviewSvg, hit.polygon
     )
     if (!selectedPoints.length) return false
 
@@ -7621,10 +9267,9 @@ function applyBrushSelectionFromExtent(mv, extent) {
         if (!x || !y || !xcol || !ycol) return
 
         applySelectionMembership(function (d) {
-            const cx = x(d[xcol])
-            const cy = y(d[ycol])
-            if (!Number.isFinite(cx) || !Number.isFinite(cy)) return false
-            return isBrushed(extent, cx, cy, null, d)
+            const coords = getMainChartBrushCoords(mv, d, null)
+            if (!Number.isFinite(coords.cx) || !Number.isFinite(coords.cy)) return false
+            return isBrushed(extent, coords.cx, coords.cy, null, d)
         })
     })
 }
@@ -7735,220 +9380,6 @@ function selectionsList(data, container) {
     scheduleSelectionPanelLightRefresh()
 }
 
-// function selectionsTypeChooser(container){
-//     let width = 50
-
-//     let panel = container
-//         .append("tr")
-        
-//         let replace = panel.append("td").attr("class","tooltip")
-
-//         replace.append("span").attr("class","tooltiptext")
-//         .text("Replace Selection") 
-
-//         let replaceB = replace.append("img")
-//             .attr("class","buttonIm")
-//             .attr("src","static/imgs/sel_square.svg")
-//             .attr("height", width)
-//             .attr("width", width)
-//             .classed("active",true)
-            
-//             .on("click", function(d, i) {
-//                 replaceB.classed("active",true)
-//                 additiveB.classed("active",false)
-//                 substractiveB.classed("active",false)
-
-//                 current_selectionType = 1
-//              });
-
-//         let additive = panel.append("td").attr("class","tooltip")
-
-//         additive.append("span").attr("class","tooltiptext")
-//         .text("Additive Selection") 
-
-//         let additiveB = additive.append("img")
-//             .attr("class","buttonIm")
-//             .attr("src","static/imgs/sel_additiv.svg")
-//             .attr("height", width)
-//             .attr("width", width)
-
-//             .on("click", function(d, i) {
-//                 replaceB.classed("active",false)
-//                 additiveB.classed("active",true)
-//                 substractiveB.classed("active",false)
-//                 current_selectionType = 2
-//              }); 
-
-//         let substractive = panel.append("td").attr("class","tooltip")
-
-//         substractive.append("span").attr("class","tooltiptext")
-//         .text("Substractive Selection") 
-
-//         let substractiveB = substractive.append("img")
-//             .attr("class","buttonIm")
-//             .attr("src","static/imgs/sel_substractiv.svg")
-//             .attr("height", width)
-//             .attr("width", width)
-             
-//             .on("click", function(d, i) {
-
-//                 replaceB.classed("active",false)
-//                 additiveB.classed("active",false)
-//                 substractiveB.classed("active",true)
-                
-//                 current_selectionType = 3
-//                 //console.lag(finalLog)
-//                 ///finalLog.push({nameAction :"add_color", callparam: {addedColor: selections[0] , selectionsBefore : selections }} ) //, data : datum, timestamp : Date.now()} )
-               
-//                 //console.lag(finalLog.join("_"))
-               
-//                 //download(Date.now()+".txt", finalLog)
-//              });
-
-//         let add = panel.append("div").attr("class","tooltip")
-
-//         add.append("span").attr("class","tooltiptext")
-//         .text("Add Selection") 
-
-//         add.append("img")
-//         .attr("class","buttonIm")
-//         .attr("src","static/imgs/add_sel.svg")
-//         .attr("height", width)
-//         .attr("width", width)
-//         .classed("active",false)
-         
-//         .on("click", function(d, i) {
-//             for (s of selections){
-//                 s.rep.classed("active2",false)
-//             }
-
-//             let newS = sel.add(reserve, selections)
-//             if(newS !== undefined){
-//                 let log = {nameAction :"add_color", callparam: {addedColor: newS["cname"] }, data : datum, timestamp : Date.now()} 
-//                 finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-//                 cache = []
-
-//                 current_color = [newS]    
-//                 setTimeout( ()=>{
-//                     selectionsList(selections, selList) ;
-//                     selectionsList(selections, selList) ;
-//                     newS.rep.classed("active2",true) 
-//                 },0 )
-//             }
-            
-//         });
-
-//         let remove = panel.append("div").attr("class","tooltip")
-        
-//         remove.append("span").attr("class","tooltiptext")
-//         .text("Remove Selection") 
-
-//         remove.append("img")
-//         .attr("class","buttonIm")
-//         .attr("src","static/imgs/remove_sel.svg")
-//         .attr("height", width)
-//         .attr("width", width)
-//         .classed("active",false)
-        
-//         .on("click", function(d, i) {
-//             let log = {nameAction :"remove_color", callparam: {removedColors: getValuesOfKey("cname",current_color ) }, data : datum, timestamp : Date.now()} 
-//             finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-//             cache = []
-
-//             if(selections.length > 2){
-//                 for( cc of current_color ){
-//                     cc.rep.classed("active2",false)
-//                     sel.remove(reserve, selections,cc)
-//                 }
-//                 setTimeout( ()=>{
-
-//                     selectionsList(selections, selList) ;
-//                     selectionsList(selections, selList) ;
-//                     if(selections.length>1){
-//                         current_color = [selections[selections.length-1]]
-//                         current_color[0].rep.classed("active2",true)
-//                     } 
-
-//                 },0 )              
-                
-               
-
-//                 setTimeout( ()=>{
-//                     scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
-
-//                     //LOGGING HISTORY/
-//                     //DONE
-//                     viewHistory.push({ "xDim": mainviewSvg.attr("xDim") ,"yDim": mainviewSvg.attr("yDim"), "data": cloneDeep(datum ) })
-//                     updateViewHistory(viewHistory)
-//                     ///////////
-
-//                 },0 )
-                
-//                 setTimeout( ()=>{
-//                     sploom.updateSplom(datum, splom, sampleData,maxSplomAcc); 
-//                 },0 )
-
-//                 setTimeout( ()=>{
-//                     refreshTableView()
-//                 },0 )
-                
-
-//             }
-            
-//         });
-
-//         let clearAll = panel.append("div").attr("class","tooltip")
-        
-//         clearAll.append("span").attr("class","tooltiptext")
-//         .text("Clear All Selections") 
-
-//         clearAll.append("img")
-//         .attr("class","buttonIm")
-//         .attr("src","static/imgs/clearAll_sel.svg")
-//         .attr("height", width)
-//         .attr("width", width)
-//         .classed("active",false)
-        
-//         .on("click", function(d, i) { 
-               
-//             let log =  {nameAction :"clear_all_selections", callparam: {}, data : datum, timestamp : Date.now()} 
-//             finalLog.push( JSON.stringify(log,Set_toJSON) ) 
-//             cache = []
-
-//             sel.clearAll(reserve, selections)
-
-//             setTimeout( ()=>{
-//                 selectionsList(selections, selList) ;
-//                 selectionsList(selections, selList) ;
-
-//                 scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
-
-//                 //LOGGING HISTORY
-//                 //DONE
-//                 viewHistory.push({ "xDim": mainviewSvg.attr("xDim") ,"yDim": mainviewSvg.attr("yDim"), "data": cloneDeep(datum ) })
-//                 updateViewHistory(viewHistory)
-//                 ///////////
-                
-//             },0 )
-
-//             setTimeout( ()=>{
-//                 scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
-//             },0 )
-            
-//             setTimeout( ()=>{
-//                 sploom.updateSplom(datum, splom, sampleData,maxSplomAcc); 
-//             },0 )
-
-//             setTimeout( ()=>{
-//                 refreshTableView()
-//             },0 )
-            
-
-            
-            
-//         });
-//}
-
         
 function selectionsTypeChooser(container){
     let width = 50
@@ -8016,10 +9447,8 @@ function selectionsTypeChooser(container){
                 zoomB.classed("active",false)
 
                 current_selectionType = 3
-                //console.lag(finalLog)
                 ///finalLog.push({nameAction :"add_color", callparam: {addedColor: selections[0] , selectionsBefore : selections }} ) //, data : datum, timestamp : Date.now()} )
                
-                //console.lag(finalLog.join("_"))
                
                 //download(Date.now()+".txt", finalLog)
              });
@@ -8043,10 +9472,8 @@ function selectionsTypeChooser(container){
             zoomB.classed("active",true)
             
             current_selectionType = 4
-            //console.lag(finalLog)
             ///finalLog.push({nameAction :"add_color", callparam: {addedColor: selections[0] , selectionsBefore : selections }} ) //, data : datum, timestamp : Date.now()} )
             
-            //console.lag(finalLog.join("_"))
             
             //download(Date.now()+".txt", finalLog)
             });
@@ -8155,12 +9582,9 @@ function selectionsTypeChooser(container){
                             finalLog.push( JSON.stringify(log,Set_toJSON) ) 
                             cache = []
 
-                            //LOGGING HISTORY/
-                            //DONE
                             pushViewHistorySnapshot()
                             updateViewHistory(viewHistory)
                             
-                            ///////////
         
                         },0 )
                         
@@ -8217,11 +9641,8 @@ function selectionsTypeChooser(container){
                         finalLog.push( JSON.stringify(log,Set_toJSON) ) 
                         cache = []
 
-                        //LOGGING HISTORY
-                        //DONE
                         pushViewHistorySnapshot()
                         updateViewHistory(viewHistory)
-                        ///////////
                         
                     },0 )
         
@@ -8338,10 +9759,7 @@ let custDim_input = (container) => {
             lower: triangleLowerYeast,
             upper: triangleUpperYeast
         })
-        sploom.invalidateSplomCaches("triangle yeast")
-        rebuildSplomWithDimensions(getSplomDimensionsForDisplay())
-        refreshMainChartRendering()
-        refreshSplomHeatFromVisitCounts()
+        scheduleSplomRebuildForCompareSwitch("triangle yeast")
     })
 
     const yeastSelectionTargetControl = yeastPanel.append("div")
@@ -8416,6 +9834,28 @@ let custDim_input = (container) => {
                     .attr("id", "splomSoucheDropdownControl")
                     .attr("class", "splom-souche-dropdown-control")
                 control.append("label")
+                    .attr("id", "splom-view-mode-label")
+                    .attr("class", "splom-souche-label")
+                    .attr("for", "splom-view-mode-select")
+                    .text("View")
+                control.append("select")
+                    .attr("id", "splom-view-mode-select")
+                    .attr("class", "splom-souche-select")
+                    .on("change", function () {
+                        applySplomViewMode(this.value, { source: "splom-view-dropdown" })
+                    })
+                control.append("label")
+                    .attr("id", "splom-category-variable-label")
+                    .attr("class", "splom-souche-label")
+                    .attr("for", "splom-category-variable-select")
+                    .text("Compare by")
+                control.append("select")
+                    .attr("id", "splom-category-variable-select")
+                    .attr("class", "splom-souche-select")
+                    .on("change", function () {
+                        applySplomComparisonVariable(this.value, { source: "splom-category-variable-dropdown" })
+                    })
+                control.append("label")
                     .attr("class", "splom-souche-label")
                     .attr("for", "splom-souche-select")
                     .text("Souche / Yeast")
@@ -8464,6 +9904,32 @@ let custDim_input = (container) => {
                 .join("option")
                 .attr("value", function (d) { return d.value })
                 .text(function (d) { return d.label })
+
+            control.select("#splom-view-mode-select").selectAll("option")
+                .data(SPLOM_VIEW_MODE_OPTIONS)
+                .join("option")
+                .attr("value", function (d) { return d.value })
+                .text(function (d) { return d.label })
+            const groupingColumns = getCategoricalGroupingColumns()
+            control.select("#splom-category-variable-select").selectAll("option")
+                .data(groupingColumns)
+                .join("option")
+                .attr("value", function (d) { return d })
+                .text(function (d) { return d })
+
+            const fullView = splomViewMode === "full"
+            const categoryDisplay = fullView || groupingColumns.length < 2 ? "none" : null
+            if (yeastColumn && groupingColumns.length > 1) {
+                control.selectAll("label[for='splom-souche-select']").text(String(yeastColumn))
+            }
+            const groupDisplay = fullView ? "none" : null
+            control.select("#splom-category-variable-label").style("display", categoryDisplay)
+            control.select("#splom-category-variable-select").style("display", categoryDisplay)
+            control.selectAll("label[for='splom-souche-select']").style("display", groupDisplay)
+            control.select("#splom-souche-select").style("display", groupDisplay)
+            control.selectAll("label[for='splom-upper-souche-select']").style("display", groupDisplay)
+            control.select("#splom-upper-souche-select").style("display", groupDisplay)
+
             syncSplomSoucheDropdownSelection()
         } catch (err) {
             console.warn("[Souche dropdown] render failed", err)
@@ -8490,6 +9956,7 @@ let custDim_input = (container) => {
         syncSplomModeRadios()
         ensureSelectionTargetControl()
         ensureMainChartYeastViewControl()
+        updateMainChartSelectionModeControl()
         updateMainChartSoucheNavigator()
         updateMainChartPairTitle()
     }
@@ -8640,7 +10107,7 @@ let custDim_input = (container) => {
         .style("font-size", "12px")
         .style("margin-bottom", "6px")
         .style("color", "#4b5563")
-        .text("Use table header checkboxes to highlight columns. With families loaded, SPLOM visibility is controlled by family chips above the matrix.");
+        .text("Check table columns, then Apply Selected Dimensions to show only those columns in the SPLOM (grouped under their family labels). Create Family remembers organization only and clears the checkboxes. Reset Columns clears the applied filter.");
 
     const splomFilterStatus = splomDimPanel.append("div")
         .style("font-size", "12px")
@@ -8667,10 +10134,105 @@ let custDim_input = (container) => {
         .attr("type", "button")
         .attr("id", "vispromResetSplomCols")
         .text("Reset Columns")
-        .attr("title", "Clear column filters and remove all dimension families")
+        .attr("title", "Clear the table column selection and restore family-based SPLOM view")
         .on("click", resetSplomColumns);
 
     setSplomColumnFilterStatus("Showing all dimensions.", false);
+
+    const colorByPanel = container.append("div")
+        .attr("class", "color-by-panel")
+        .style("margin-top", "10px")
+        .style("border-top", "1px solid #e5e7eb")
+        .style("padding-top", "8px")
+
+    colorByPanel.append("div")
+        .style("font-weight", "600")
+        .style("font-size", "12px")
+        .style("margin-bottom", "4px")
+        .text("Color by")
+
+    colorByPanel.append("div")
+        .style("font-size", "12px")
+        .style("margin-bottom", "6px")
+        .style("color", "#4b5563")
+        .text("Color points by a categorical variable (labels shown, not numeric codes). Selection outline still applies.")
+
+    const colorBySelect = colorByPanel.append("select")
+        .attr("id", "visprom-color-by-select")
+        .style("max-width", "100%")
+
+    const colorByLegend = colorByPanel.append("div")
+        .attr("id", "visprom-color-by-legend")
+        .style("margin-top", "6px")
+        .style("display", "flex")
+        .style("flex-direction", "column")
+        .style("gap", "4px")
+
+    function refreshColorByControls() {
+        const select = document.getElementById("visprom-color-by-select")
+        const legend = d3.select("#visprom-color-by-legend")
+        if (!select) return
+        const prev = columnMetadata.getActiveColorBy() || "selection"
+        select.innerHTML = ""
+        const opts = [
+            { value: "selection", label: "Selection colors" },
+            { value: "none", label: "None (default)" }
+        ]
+        ;(categoricalColumns || []).forEach(function (col) {
+            opts.push({ value: col, label: col + " [categorical]" })
+        })
+        opts.forEach(function (o) {
+            const option = document.createElement("option")
+            option.value = o.value
+            option.textContent = o.label
+            select.appendChild(option)
+        })
+        const valid = opts.some(function (o) { return o.value === prev })
+        select.value = valid ? prev : "selection"
+        columnMetadata.setActiveColorBy(select.value === "none" ? null : select.value)
+
+        legend.html("")
+        const active = columnMetadata.getActiveColorBy()
+        if (!active || active === "selection" || !columnMetadata.isCategoricalDimension(active)) {
+            return
+        }
+        columnMetadata.ensureCategoryColors(active)
+        const domain = columnMetadata.getCategoryDomain(active)
+        domain.forEach(function (label) {
+            const row = legend.append("label")
+                .style("display", "flex")
+                .style("align-items", "center")
+                .style("gap", "6px")
+                .style("font-size", "12px")
+            row.append("input")
+                .attr("type", "color")
+                .attr("value", columnMetadata.getCategoryColor(active, label))
+                .on("input", function () {
+                    columnMetadata.setCategoryColor(active, label, this.value)
+                    requestSelectionRestyle()
+                    if (datum && splom && !splom.empty()) {
+                        rebuildSplomWithDimensions(getVisibleSplomDimensions())
+                    }
+                })
+            row.append("span").text(label)
+        })
+    }
+
+    colorBySelect.on("change", function () {
+        const value = this.value
+        columnMetadata.setActiveColorBy(value === "none" ? null : value)
+        refreshColorByControls()
+        requestSelectionRestyle()
+        if (datum && splom && !splom.empty()) {
+            rebuildSplomWithDimensions(getVisibleSplomDimensions())
+        }
+        if (mainviewSvg && mainChartMvX && mainChartMvY) {
+            syncMainChartLayout()
+        }
+    })
+
+    window.refreshVispromColorByControls = refreshColorByControls
+    refreshColorByControls()
 
     let addCustomDim = () => {
         let inputValue = (inputF.property("value") || "").trim();
@@ -8701,21 +10263,42 @@ let custDim_input = (container) => {
         if (customDimensionExpressions.indexOf(inputValue) === -1) {
             customDimensionExpressions.push(inputValue)
         }
-        // If the user is actively filtering SPLOM columns, include new custom dims by default
-        // so they appear immediately after creation.
-        if (selectedColumns && selectedColumns.length && selectedColumns.indexOf(inputValue) === -1) {
+        // Custom dims are selected and appended to the applied set only — never expand whole families.
+        if (selectedColumns.indexOf(inputValue) === -1) {
             selectedColumns.push(inputValue)
         }
-        if (Object.keys(currentDimensionFamilies).length && hasDimensionFamilies()) {
+        if (hasActiveSplomDimensionFilter()) {
+            const open = getSplomDimensionFilter().slice()
+            if (open.indexOf(inputValue) === -1) open.push(inputValue)
+            setAppliedSplomDimensions(open)
+        } else if (selectedColumns.length) {
+            // If the user is mid-selection (checkboxes) but has not applied yet,
+            // leave applied alone; they can Apply Selected Dimensions next.
+        } else if (hasDimensionFamilies()) {
+            syncDimensionFamiliesState()
+            expandedFamilies.add(dimensionFamilies.OTHER_FAMILY)
+        }
+        if (hasDimensionFamilies()) {
             syncDimensionFamiliesState()
             renderFamilyDimensionPanel()
         }
+
         dimVisitcount[inputValue] = 0;
         for (let d of dimensions){
             viewVisitcount[getSplomVisitCountKey(d, inputValue)] = 0;
         }
 
-        rebuildSplomWithDimensions(getSplomDimensionsForDisplay());
+        const visible = getVisibleSplomDimensions()
+        updateSplomDimensionFamilyWarnings()
+        rebuildSplomWithDimensions(visible)
+        ensureSplomFamilyToolbar()
+        if (setSplomColumnFilterStatus) {
+            if (hasActiveSplomDimensionFilter()) {
+                setSplomColumnFilterStatus("SPLOM: " + visible.length + " applied dimension(s), including custom dim.", false)
+            } else {
+                setSplomColumnFilterStatus("Custom dim added. Use Apply Selected Dimensions to show only checked columns.", false)
+            }
+        }
         setTimeout( ()=>{
             refreshTableView();
             updateCountTable (datum, countTable);
@@ -8758,7 +10341,6 @@ function GroupActionChooser(container){
             .attr("width", width)
 
             .on("click", function(d, i) {
-                //console.lag(current_color)
           
                 let newS = sel.add(reserve, selections)
                 if(newS !== undefined){
@@ -8882,7 +10464,8 @@ function updateTableView(data, container, columnsForTable){
             .attr("type", "checkbox")
             .attr("class", "table-dim-checkbox")
             .attr("data-dim", d)
-        label.append("span").text(d)
+        const badge = columnMetadata.isCategoricalDimension(d) ? " [categorical]" : ""
+        label.append("span").text(d + badge)
     })
 
     thEnter.filter(function (d) { return d === "color" })
@@ -9028,7 +10611,6 @@ const uni = ( acc , sel) =>{
 const doUnion = ( selectArr , resultSelection) =>{
     
     let res = selectArr.reduce(uni, [] );
-    //console.lag(res)
 
     resultSelection.content = new Set(res);
     resultSelection.originCol = selectArr ;
@@ -9045,8 +10627,6 @@ const doUnion = ( selectArr , resultSelection) =>{
 
     scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
 
-    //LOGGING HISTORY
-    //DONE
     pushViewHistorySnapshot()
     setTimeout( ()=>{
         updateViewHistory(viewHistory)
@@ -9064,7 +10644,6 @@ const doUnion = ( selectArr , resultSelection) =>{
 
     finalLog.push( JSON.stringify(log,Set_toJSON) ) 
     cache = []
-    ///////////
     
     selectionsList(selections, selList) ;
     selectionsList(selections, selList) ;
@@ -9099,8 +10678,6 @@ const doIntersection = ( selectArr , resultSelection) =>{
 
         scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
 
-        //LOGGING HISTORY
-        //DONE
         pushViewHistorySnapshot()
         setTimeout( ()=>{
             updateViewHistory(viewHistory)
@@ -9116,7 +10693,6 @@ const doIntersection = ( selectArr , resultSelection) =>{
         
         finalLog.push( JSON.stringify(log,Set_toJSON) ) 
         cache = []
-        ///////////
         
         selectionsList (selections, selList)
         selectionsList (selections, selList)
@@ -9157,8 +10733,6 @@ const doDifference = ( selectArr , resultSelection) =>{
 
         scaterplot.updatePoints(getMainChartPrimaryData(), mainviewSvg)
 
-        //LOGGING HISTORY
-        //DONE
         pushViewHistorySnapshot()
         setTimeout( ()=>{
             updateViewHistory(viewHistory)
@@ -9174,7 +10748,6 @@ const doDifference = ( selectArr , resultSelection) =>{
        
         finalLog.push( JSON.stringify(log,Set_toJSON) ) 
         cache = []
-        ///////////
         
         selectionsList (selections, selList)
         selectionsList (selections, selList)
@@ -9194,7 +10767,6 @@ const setRanges = (data, dimensions) => {
     for (dim of dimensions){
         let dataDim = getcol (data,dim)
         ranges[dim] = d3.extent(dataDim)
-       // console.log( ranges[dim])
     }
 }
 
@@ -9205,7 +10777,6 @@ const minMaxMed = (selcontent, dimensions,data) => {
             let array = getcol([...selcontent], dim)
             variance[dim] = math.variance(array)/math.variance( getcol([...data], dim))
             mean[dim] = math.mean(array)
-            // console.log(variance[dim])
         }else{
             variance[dim] = null
             mean[dim] = null
@@ -9214,13 +10785,10 @@ const minMaxMed = (selcontent, dimensions,data) => {
                  
     } 
 
-    //console.lag (variance)
-    //console.lag (mean)
     
 } 
 
 const MinOrMax = (variance, mean, range) => {
-    //console.lag(range)
     
     let min=parseFloat(range[0])
     let max=parseFloat(range[1])
@@ -9229,11 +10797,6 @@ const MinOrMax = (variance, mean, range) => {
     let midMinus =min + (mid - min)/2   
     let midPlus = mid + (max - mid)/2   
 
-    // console.log("r0   :",min)
-    // console.log("minus:",midMinus)
-    // console.log("mid  :",mid     )
-    // console.log("plus :",midPlus )
-    // console.log("r1   :",max )
     
     if(variance !== null && variance<0.1 ){
         if( mean >= min && mean < midMinus ){
@@ -9246,9 +10809,6 @@ const MinOrMax = (variance, mean, range) => {
             return "Max";
         }
         else{
-            //console.lag("min:",min) 
-            //console.lag("max:",max) 
-            //console.lag("mean:",mean)   
             return "/"
         }
     }else{
@@ -9301,6 +10861,7 @@ let getValuesOfKey = (key, arr) =>{
             ensureSelectionLayerMeta(s)
             sels[s.cname] = {
                 points: loader.pointsAToiArray(s.content),
+                rowIds: getRowIdsFromLayerContent(s),
                 dispName: s.displayName,
                 id: s.id,
                 label: s.label,
@@ -9308,7 +10869,8 @@ let getValuesOfKey = (key, arr) =>{
                 color: s.color && s.color.string ? s.color.string : "",
                 createdAt: s.createdAt,
                 updatedAt: s.updatedAt,
-                // Snapshot by value so history entries do not drift as runtime state changes.
+                visibility: s.visibility !== false,
+                isolate: s.isolate === true,
                 selectionsBySouche: cloneDeep(s.selectionsBySouche || {})
             }
         //}
@@ -9340,7 +10902,6 @@ let getValuesOfKey = (key, arr) =>{
     }
 
     return entry
-    //console.lag(entry)
 
   }
 
@@ -9371,7 +10932,11 @@ let getValuesOfKey = (key, arr) =>{
         if (modeSelect) modeSelect.value = mainChartMode
     }
 
-    applyLightSessionContextForRestore(entry.session)
+    if (entry.session) {
+        applySessionUiState(entry.session)
+    } else {
+        applyLightSessionContextForRestore(entry.session)
+    }
     if (entry.active_selectiontype != null && (!entry.session || entry.session.currentSelectionType == null)) {
         current_selectionType = entry.active_selectiontype
     }
@@ -9413,14 +10978,22 @@ let getValuesOfKey = (key, arr) =>{
             if (saved.selectionsBySouche) temp.selectionsBySouche = cloneDeep(saved.selectionsBySouche)
             else temp.selectionsBySouche = {}
             ensureSelectionLayerMeta(temp)
-            temp.content = new Set(loader.indexAToPArray(saved.points, datum))
-
-            for(p of saved.points ){
-                if(temp.color != selections[0].color){
-                    datum[p].color.add(temp.color)
-                }
-                
+            if (saved.visibility === false) temp.visibility = false
+            else temp.visibility = true
+            temp.isolate = saved.isolate === true
+            if (saved.color) {
+                applySelectionLayerColor(temp, saved.color)
             }
+            temp.content = new Set()
+            collectSavedLayerRowIds(saved).forEach(function (id) {
+                const d = resolveRowFromSavedId(id)
+                if (!d) return
+                temp.content.add(d)
+                if (temp.cname !== "Blue" && temp.color) {
+                    if (!d.color) d.color = new Set()
+                    d.color.add(temp.color)
+                }
+            })
     });
     normalizeSelectionsOrder()
     ensureAllColoredSelectionLayersMeta()
@@ -9447,12 +11020,17 @@ let getValuesOfKey = (key, arr) =>{
         rebuildFavoritesFromIndices()
     }
 
+    current_color = current_color.filter(Boolean)
+    if (!current_color.length && selections.length > 1) {
+        current_color = [selections[selections.length - 1]]
+    }
+
     const chartDims = getRestoreChartDims(entry, opts)
 
     setTimeout(function () {
         invalidateSelectionMembershipIndex()
         rebuildSelectionMembershipIndex()
-        rebuildColoredSelectionContentFromSoucheKeys()
+        rebuildColoredSelectionContentFromSoucheKeys({ skipSyncFromContent: true })
 
         if (chartDims.xDim && chartDims.yDim) {
             activateSplomPair(chartDims.xDim, chartDims.yDim, chartDims.source, {
@@ -9481,8 +11059,6 @@ let getValuesOfKey = (key, arr) =>{
 
   function updateCountTable(data, container){
    
-    //console.log(dimVisitcount)
-    //console.log(totalDimVisitcount)
 
     const activeSelection = current_color && current_color[0] && current_color[0].content
         ? current_color[0].content
@@ -9518,15 +11094,12 @@ let getValuesOfKey = (key, arr) =>{
         return barwidth(dimVisitcount[d] || 0)
     }).attr("height", "100%").attr("fill", "DeepSkyBlue"  ) //d => { return barcolor(  dimVisitcount[d])} 
 
-    //////
     let minMaxDisplay = container.select("thead").append("tr")
     .selectAll("th") 
     .data( [...dimensions] )
 
-    //console.lag([...dimensions] )
     let thEnter3 = minMaxDisplay.join("th")
     .text((d)=>{
-       //console.lag(variance[d], mean[d],ranges[d], MinOrMax(variance[d], mean[d],ranges[d]) ); 
        return MinOrMax(variance[d], mean[d],ranges[d])
     })
  
@@ -9689,7 +11262,6 @@ let viewToDimCount = () => {
     for(ds of Object.keys(viewVisitcount)){
         const pairPart = ds.indexOf("|") >= 0 ? ds.slice(ds.indexOf("|") + 1) : ds
         let d = pairPart.split('_')
-        //console.log(d)
         dimVisitcount[d[0]] += viewVisitcount[ds]
         dimVisitcount[d[1]] += viewVisitcount[ds]
         totalDimVisitcount  += viewVisitcount[ds]

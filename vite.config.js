@@ -104,18 +104,6 @@ function ensureRoboticsPdfPlugin() {
   };
 }
 
-const VISPROM_APP_CANDIDATES = [
-  path.resolve(os.homedir(), 'Desktop/VisProm-mac-universal 4/VisProm.app'),
-  path.resolve(os.homedir(), 'Desktop/VisProm-mac-universal/VisProm.app'),
-  path.resolve(os.homedir(), 'Desktop/VisProm.app'),
-];
-
-function resolveVispromAppPath() {
-  const fromEnv = process.env.VISPROM_APP_PATH;
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-  return VISPROM_APP_CANDIDATES.find((candidate) => fs.existsSync(candidate)) || null;
-}
-
 function ensureVispromPaper() {
   const root = path.resolve(process.cwd());
   const cacheDir = path.resolve(os.homedir(), '.cache/portfolio-website');
@@ -175,96 +163,18 @@ function fileSize(filePath) {
   }
 }
 
-function positionVispromWindow(bounds) {
-  const x = Math.max(0, Math.round(bounds.x || 0));
-  const y = Math.max(0, Math.round(bounds.y || 0));
-  const width = Math.max(400, Math.round(bounds.width || 1100));
-  const height = Math.max(300, Math.round(bounds.height || 700));
-
-  const script = `
-    delay 0.4
-    repeat with i from 1 to 24
-      try
-        tell application "System Events"
-          if exists process "VisProm" then
-            tell process "VisProm"
-              if (count of windows) > 0 then
-                set position of window 1 to {${x}, ${y}}
-                set size of window 1 to {${width}, ${height}}
-                return
-              end if
-            end tell
-          end if
-        end tell
-      end try
-      delay 0.2
-    end repeat
-  `;
-
-  try {
-    execSync(`osascript -e ${JSON.stringify(script)}`, { stdio: 'ignore' });
-  } catch {
-    console.warn('[visprom-local] Could not position VisProm window (Accessibility permission may be needed)');
-  }
-}
-
-/** Local dev: open VisProm.app at popup frame bounds + serve the VisProm++ paper PDF. */
-function vispromLocalAssetsPlugin() {
+/** Serve the VisProm++ paper PDF in dev. */
+function vispromPaperPlugin() {
   return {
-    name: 'visprom-local-assets',
+    name: 'visprom-paper',
     buildStart() {
       ensureVispromPaper();
     },
     configureServer(server) {
       const paperFile = ensureVispromPaper();
-      const appPath = resolveVispromAppPath();
-
-      if (appPath) {
-        console.log(`[visprom-local] Will launch: ${appPath}`);
-      } else {
-        console.warn('[visprom-local] VisProm.app not found on Desktop');
-      }
 
       server.middlewares.use((req, res, next) => {
         const url = req.url?.split('?')[0];
-
-        if (url === '/__open-visprom-app' && req.method === 'POST') {
-          const target = resolveVispromAppPath();
-          if (!target) {
-            res.statusCode = 404;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ ok: false, error: 'VisProm.app not found on Desktop' }));
-            return;
-          }
-
-          let body = '';
-          req.on('data', (chunk) => {
-            body += chunk;
-          });
-          req.on('end', () => {
-            let bounds = {};
-            try {
-              bounds = body ? JSON.parse(body) : {};
-            } catch {
-              bounds = {};
-            }
-
-            try {
-              execSync(`open ${JSON.stringify(target)}`, { stdio: 'ignore' });
-              if (bounds.width && bounds.height) {
-                positionVispromWindow(bounds);
-              }
-              res.statusCode = 200;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ ok: true, path: target, bounds }));
-            } catch (error) {
-              res.statusCode = 500;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ ok: false, error: String(error) }));
-            }
-          });
-          return;
-        }
 
         if (url === '/visprom-final-paper.pdf') {
           const filePath = ensureVispromPaper();
@@ -284,7 +194,7 @@ function vispromLocalAssetsPlugin() {
         next();
       });
 
-      console.log(`[visprom-local] Serving /visprom-final-paper.pdf from ${paperFile}`);
+      console.log(`[visprom-paper] Serving /visprom-final-paper.pdf from ${paperFile}`);
     },
   };
 }
@@ -557,7 +467,7 @@ export default defineConfig({
     react(),
     restoreVideosPlugin(),
     ensureRoboticsPdfPlugin(),
-    vispromLocalAssetsPlugin(),
+    vispromPaperPlugin(),
     yahooFinanceProxyPlugin(),
     lockLayoutPlugin(),
   ],

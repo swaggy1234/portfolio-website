@@ -148,7 +148,7 @@ function ensureVispromPaper() {
 
   if (!isValidPdf(publicFile) || fileSize(publicFile) !== fileSize(cacheFile)) {
     writeTitledCopy(cacheFile, publicFile);
-  } else {
+  } else if (fs.existsSync(fixScript) && process.env.VERCEL !== '1') {
     writeTitledCopy(publicFile, publicFile);
   }
 

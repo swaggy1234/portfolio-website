@@ -23,6 +23,12 @@ function readJson(filePath, fallback = null) {
   }
 }
 
+const isCiBuild = Boolean(process.env.VERCEL || process.env.CI);
+
+function bundledVispromExists() {
+  return fs.existsSync(path.resolve(REPO_ROOT, 'public/visprom/index.html'));
+}
+
 function resolveLatestCommitFromGit() {
   const output = execSync(`git ls-remote ${JSON.stringify(VISPROM_REPO)} refs/heads/${VISPROM_BRANCH}`, {
     encoding: 'utf8',
@@ -41,6 +47,16 @@ function resolveLatestCommitFromGit() {
 }
 
 async function fetchLatestCommit() {
+  const state = readJson(STATE_FILE);
+  if (isCiBuild && state?.sha) {
+    return {
+      sha: state.sha,
+      shortSha: state.shortSha || state.sha.slice(0, 7),
+      message: state.message || 'bundled VisProm assets',
+      date: state.syncedAt || new Date().toISOString(),
+    };
+  }
+
   try {
     const response = await fetch(
       `https://api.github.com/repos/MIA-PS-Vis/UPSaclay-VisProm/commits/${VISPROM_BRANCH}`,
@@ -143,6 +159,14 @@ function syncFromClone(commit) {
 }
 
 export async function syncVisprom({ force = false } = {}) {
+  if (isCiBuild && bundledVispromExists() && !force) {
+    const state = readJson(STATE_FILE);
+    console.log(
+      `[sync-visprom] CI build — using committed VisProm bundle${state?.shortSha ? ` (${state.shortSha})` : ''}`
+    );
+    return state;
+  }
+
   const commit = await fetchLatestCommit();
   const state = readJson(STATE_FILE);
 
@@ -151,8 +175,16 @@ export async function syncVisprom({ force = false } = {}) {
     return state;
   }
 
-  syncFromClone(commit);
-  return readJson(STATE_FILE);
+  try {
+    syncFromClone(commit);
+    return readJson(STATE_FILE);
+  } catch (error) {
+    if (bundledVispromExists()) {
+      console.warn(`[sync-visprom] Sync failed, using committed bundle: ${error.message || error}`);
+      return readJson(STATE_FILE);
+    }
+    throw error;
+  }
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

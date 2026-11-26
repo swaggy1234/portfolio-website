@@ -25,6 +25,8 @@ import {
   resolveSticker,
 } from '../data/layoutEdit';
 import InteractiveText from './InteractiveText';
+import KineticText from './KineticText';
+import HeroWater from './HeroWater';
 import EditableSticker from './EditableSticker';
 import HeroVideo from './HeroVideo';
 import LayoutEditPanel from './LayoutEditPanel';
@@ -47,6 +49,7 @@ function mergeLayout(stickerId, stickerType, liveLayouts) {
 export default function Hero({ stageRef }) {
   const heroElRef = useRef(null);
   const videoCanvasRef = useRef(null);
+  const waterRef = useRef(null);
   const videoWrapRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [arrowVisible, setArrowVisible] = useState(true);
@@ -204,11 +207,6 @@ export default function Hero({ stageRef }) {
         </button>
 
         <nav className={`hero__nav${menuOpen ? ' hero__nav--open' : ''}`}>
-          <button onClick={() => scrollTo('work')}>Technical Work</button>
-          <button onClick={() => scrollTo('studio')}>Creative Work</button>
-          <button onClick={() => scrollTo('about')}>About</button>
-          <button onClick={() => scrollTo('experience')}>Experience</button>
-          <button onClick={() => scrollTo('contact')}>Contact</button>
           <a
             href={siteConfig.social.resume}
             target="_blank"
@@ -217,6 +215,11 @@ export default function Hero({ stageRef }) {
           >
             Resume
           </a>
+          <button onClick={() => scrollTo('work')}>Technical Work</button>
+          <button onClick={() => scrollTo('studio')}>Creative Work</button>
+          <button onClick={() => scrollTo('about')}>About</button>
+          <button onClick={() => scrollTo('experience')}>Experience</button>
+          <button onClick={() => scrollTo('contact')}>Contact</button>
         </nav>
       </header>
 
@@ -237,16 +240,38 @@ export default function Hero({ stageRef }) {
         />
       ) : null}
 
+      {HERO_VIDEO && !layoutEditActive && siteConfig.heroWater && (
+        <HeroWater
+          heroRef={heroElRef}
+          videoCanvasRef={videoCanvasRef}
+          videoWrapRef={videoWrapRef}
+          waterRef={waterRef}
+          settings={siteConfig.heroWater}
+        />
+      )}
+
       <div className="hero__content">
         {HERO_VIDEO ? (
           <div className="hero__content-motion">
-            <InteractiveText
-              lines={siteConfig.heroStatement}
-              baseColor="var(--color-wine)"
-              accentPalette={HERO_TEXT_ACCENT_PALETTE}
-              videoOverlapCanvasRef={videoCanvasRef}
-              videoOverlapWrapRef={videoWrapRef}
-            />
+            {siteConfig.heroCurrent ? (
+              <KineticText
+                lines={siteConfig.heroStatement}
+                settings={siteConfig.heroCurrent}
+                accentPalette={HERO_TEXT_ACCENT_PALETTE}
+                videoCanvasRef={videoCanvasRef}
+                videoWrapRef={videoWrapRef}
+                waterRef={waterRef}
+                waterDistortion={siteConfig.heroWater?.distortionStrength}
+              />
+            ) : (
+              <InteractiveText
+                lines={siteConfig.heroStatement}
+                baseColor="var(--color-wine)"
+                accentPalette={HERO_TEXT_ACCENT_PALETTE}
+                videoOverlapCanvasRef={videoCanvasRef}
+                videoOverlapWrapRef={videoWrapRef}
+              />
+            )}
           </div>
         ) : (
           <motion.div className="hero__content-motion" style={contentMotionStyle}>

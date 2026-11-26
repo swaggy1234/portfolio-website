@@ -16,6 +16,22 @@ export const siteConfig = {
     'WORKING AT THE INTERSECTION OF',
     'DATA, DESIGN & HUMAN EXPERIENCE',
   ],
+  // Displacement and interaction use pixels. Rotation is in degrees.
+  heroCurrent: {
+    currentStrength: 16,
+    distortion: 7,
+    speed: 0.32,
+    rotation: 5,
+    mouseStrength: 27,
+    mouseRadius: 125,
+  },
+  heroWater: {
+    rippleOpacity: 0.46,
+    propagationSpeed: 81, // CSS pixels per second.
+    rippleFrequency: 1.05, // Fish ripples per second, per tracked fish.
+    distortionStrength: 8,
+    causticIntensity: 0.14,
+  },
 
   social: {
     github: 'https://github.com/swaggy1234',

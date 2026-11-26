@@ -23,7 +23,7 @@ function randomFadeDuration() {
   return FADE_MIN + Math.random() * (FADE_MAX - FADE_MIN);
 }
 
-function measureVideoOverlap(letterRect, wrapRect, canvas) {
+export function measureVideoOverlap(letterRect, wrapRect, canvas) {
   if (
     letterRect.right < wrapRect.left ||
     letterRect.left > wrapRect.right ||

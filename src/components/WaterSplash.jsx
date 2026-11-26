@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import './WaterSplash.css';
 
 const droplets = [
-  [-29, -21, 4],
-  [-9, -36, 5],
-  [18, -30, 4],
-  [33, -8, 5],
-  [22, 22, 4],
-  [-25, 18, 3],
+  [-23, -16, 4, -43],
+  [-13, -26, 3, -28],
+  [-2, -33, 4, 5],
+  [12, -28, 3, 24],
+  [22, -16, 4, 47],
 ];
 
 export default function WaterSplash() {
@@ -19,7 +18,7 @@ export default function WaterSplash() {
     let lastRipple;
 
     function addSplash({ clientX: x, clientY: y }, isTrail) {
-      const point = { id: nextId.current++, x, y, isTrail };
+      const point = { id: nextId.current++, x, y, isTrail, tilt: Math.random() * 50 - 25 };
       setSplashes((current) => [...current, point]);
     }
 
@@ -31,11 +30,12 @@ export default function WaterSplash() {
 
     function move(event) {
       if (event.pointerType !== 'mouse' || reducedMotion.matches) return;
+      if (event.target?.closest?.('.hero')?.querySelector('.hero-water')) return;
 
       const { timeStamp, clientX, clientY } = event;
       if (lastRipple && (
-        timeStamp - lastRipple.timeStamp < 55 ||
-        Math.hypot(clientX - lastRipple.clientX, clientY - lastRipple.clientY) < 12
+        timeStamp - lastRipple.timeStamp < 195 ||
+        Math.hypot(clientX - lastRipple.clientX, clientY - lastRipple.clientY) < 39
       )) return;
 
       lastRipple = { timeStamp, clientX, clientY };
@@ -53,18 +53,30 @@ export default function WaterSplash() {
 
   return (
     <div className="water-splashes" aria-hidden="true">
-      {splashes.map(({ id, x, y, isTrail }) => (
-        <span className="water-splash" key={id} style={{ left: x, top: y }}>
-          {!isTrail && <span className="water-splash__ring" />}
+      {splashes.map(({ id, x, y, isTrail, tilt }) => (
+        <span className="water-splash" key={id} style={{ left: x, top: y, '--tilt': `${tilt}deg` }}>
+          {!isTrail && (
+            <>
+              <span className="water-splash__ring" />
+              <span className="water-splash__ring water-splash__ring--middle" />
+            </>
+          )}
           <span
             className={`water-splash__ring water-splash__ring--${isTrail ? 'trail' : 'inner'}`}
             onAnimationEnd={() => setSplashes((current) => current.filter((point) => point.id !== id))}
           />
-          {!isTrail && droplets.map(([dx, dy, size]) => (
+          {!isTrail && droplets.map(([dx, dy, size, angle], index) => (
             <span
               className="water-splash__drop"
               key={dx}
-              style={{ '--dx': `${dx}px`, '--dy': `${dy}px`, '--size': `${size}px` }}
+              style={{
+                '--dx': `${dx}px`,
+                '--dy': `${dy}px`,
+                '--size': `${size}px`,
+                '--drop-angle': `${angle}deg`,
+                '--flight': `${440 + index % 3 * 55}ms`,
+                '--lift-delay': `${index % 3 * 16}ms`,
+              }}
             />
           ))}
         </span>

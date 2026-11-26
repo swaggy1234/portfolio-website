@@ -2,6 +2,20 @@ import { motion } from 'framer-motion';
 import { siteConfig } from '../data/siteContent';
 import './Contact.css';
 
+function openInquiryEmail(event) {
+  event.preventDefault();
+  const fields = new FormData(event.currentTarget);
+  const subject = `Project inquiry: ${fields.get('project').trim()}`;
+  const body = [
+    `Name: ${fields.get('name').trim()}`,
+    `Email: ${fields.get('email').trim()}`,
+    '',
+    fields.get('details').trim(),
+  ].join('\r\n');
+
+  window.location.href = `${siteConfig.social.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 export default function Contact() {
   return (
     <section className="section contact" id="contact">
@@ -19,9 +33,31 @@ export default function Contact() {
           something together
         </h2>
         <p className="contact__text">
-          I&apos;m open to collaborations, research opportunities, and creative projects.
-          Reach out. I&apos;d love to hear from you.
+          I&apos;m available for creative technology contracts, interactive projects, and collaborations.
         </p>
+
+        <form className="contact__inquiry" onSubmit={openInquiryEmail} aria-labelledby="inquiry-title">
+          <h3 id="inquiry-title">Project inquiries</h3>
+          <div className="contact__inquiry-fields">
+            <label>
+              Name
+              <input name="name" autoComplete="name" required maxLength={100} />
+            </label>
+            <label>
+              Email
+              <input type="email" name="email" autoComplete="email" required maxLength={160} />
+            </label>
+          </div>
+          <label>
+            Project name or type
+            <input name="project" placeholder="e.g. Interactive installation" required maxLength={120} />
+          </label>
+          <label>
+            What are you working on?
+            <textarea name="details" rows={5} placeholder="Tell me about the idea, timeline, and budget if you have one." required maxLength={1200} />
+          </label>
+          <button type="submit">Open email draft</button>
+        </form>
 
         <a href={siteConfig.social.email} className="contact__email">
           {siteConfig.email}

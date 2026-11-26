@@ -32,6 +32,62 @@
   transition: opacity 0.3s;
 }
 
+.contact__inquiry {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 4vw, 1.75rem);
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: var(--color-ivory);
+  text-align: left;
+}
+
+.contact__inquiry h3 {
+  font: 400 1.85rem/1.1 var(--font-serif);
+}
+
+.contact__inquiry-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 1rem;
+}
+
+.contact__inquiry label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.contact__inquiry input,
+.contact__inquiry textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--color-dusty-rose);
+  border-radius: 0.4rem;
+  color: var(--color-wine);
+  background: #fff;
+  font: 400 1rem/1.4 var(--font-sans);
+}
+
+.contact__inquiry textarea {
+  resize: vertical;
+}
+
+.contact__inquiry button {
+  justify-self: start;
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  background: var(--color-burgundy);
+  color: #fff;
+  font-size: 0.95rem;
+}
+
+.contact__inquiry button:hover {
+  background: var(--color-wine);
+}
+
 .contact__email:hover {
   opacity: 0.5;
 }

@@ -1,0 +1,132 @@
+.resume {
+  background: #fff;
+  padding-bottom: 0;
+}
+
+.resume__card {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 1.25rem;
+}
+
+.resume__toggle {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: clamp(7rem, 12vw, 9rem);
+  overflow: hidden;
+  padding: 1rem clamp(1rem, 5vw, 4rem);
+  background: #fff;
+  color: #0f2847;
+  cursor: pointer;
+  list-style: none;
+}
+
+.resume__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.resume__toggle:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -5px;
+}
+
+.resume__title {
+  font-family: var(--font-serif);
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  line-height: 1;
+}
+
+.resume__fish {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  z-index: -1;
+  width: auto;
+  height: 100%;
+  aspect-ratio: 40 / 27;
+  object-fit: fill;
+  mix-blend-mode: multiply;
+  opacity: 0.65;
+  pointer-events: none;
+  animation: resume-fish-drift 15s linear infinite backwards;
+}
+
+.resume__fish--following {
+  animation-delay: 7.5s;
+}
+
+@keyframes resume-fish-drift {
+  from { left: 100%; transform: translateX(0); }
+  60%, to { left: 0; transform: translateX(-100%); }
+}
+
+.resume__title > span {
+  display: inline-block;
+  transition: color 260ms ease-out;
+}
+
+.resume__title .resume__letter--blue {
+  color: #2563eb;
+  transition-duration: 85ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resume__fish {
+    display: none;
+  }
+}
+
+.resume__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fffffff0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.resume__indicator {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.resume__preview {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+  padding: clamp(0.75rem, 3vw, 1.5rem);
+  background: #fff;
+}
+
+.resume__card[open] .resume__preview {
+  animation: resume-reveal 420ms ease-out both;
+}
+
+.resume__pdf {
+  display: block;
+  width: 100%;
+  height: clamp(24rem, 80svh, 60rem);
+  border: 1px solid #b2cef4;
+  border-radius: 0.5rem;
+  background: white;
+}
+
+.resume__file {
+  color: #1e4a7a;
+  font-size: 0.875rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+@keyframes resume-reveal {
+  from { opacity: 0; transform: translateY(-0.5rem); }
+  to { opacity: 1; transform: translateY(0); }
+}

@@ -54,10 +54,8 @@ export const projects = [
     link: vispromSync.demoUrl,
     github: 'https://github.com/MIA-PS-Vis/UPSaclay-VisProm',
     popup: 'visprom',
-    popupUrl: vispromSync.demoUrl,
     popupPaperAsset: 'vispromFinalPaper',
-    popupPaperTitle: 'Visprom ++ Paper',
-    popupTitle: '@ VISPROM  ·  INRAE',
+    popupPaperTitle: 'INRAE Paper',
     description: [
       'VisProm is an interactive data visualization tool developed at INRAE to help scientists explore and interpret complex, high-dimensional scientific datasets.',
       'I designed and developed the tool end-to-end, from the visualization architecture and interaction design to the implementation of exploration, filtering, and comparison features. I also led design workshops with leading wine and fermentation scientists, working directly with researchers to understand their workflows, pain points, and analytical needs, and translating those insights into tools that support real scientific decision-making.',
@@ -70,8 +68,8 @@ export const projects = [
     category: 'AI / Data Systems',
     year: 'June 2025 – May 2026',
     tag: 'Research',
-    image:
-      'https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=1200&q=80&auto=format&fit=crop',
+    image: '/robotics/chewy-team.jpg',
+    imageAlt: 'The Chewy team with a humanoid robot and robot dog beneath the Think Big wall',
     link: '#',
     github: 'https://github.com/swaggy1234/ds4300-Final',
     popup: 'pdf',
@@ -126,10 +124,29 @@ export const projects = [
   },
 ];
 
+export const recommendations = [
+  {
+    name: 'Nadia Boukhelifa',
+    role: 'Researcher at INRAE',
+    profile: 'https://www.linkedin.com/in/nadia-boukhelifa-77640b11/',
+    excerpt: 'She was particularly attentive to the end-user experience and to incorporating user feedback into her work.',
+  },
+  {
+    name: 'Chuck Lipman',
+    role: 'Principal Software Engineer at Alert Innovation',
+    profile: 'https://www.linkedin.com/in/chuck-lipman-94674a3/',
+    excerpt: 'a strong work ethic, a solid grasp of engineering concepts',
+  },
+  {
+    name: 'Christopher LaCount',
+    role: 'Software engineering teammate at Walmart Advanced Systems & Robotics',
+    profile: 'https://www.linkedin.com/in/chris-lacount/',
+    excerpt: 'a very quick study, especially when it came to writing and producing code',
+  },
+];
+
 export const galleryContent = {
-  label: 'Studio',
-  title: 'A walk through the work',
-  lede: 'Personal drawings and canvases. Use the arrows to walk the hall.',
+  title: 'Creative Work',
   works: [
     {
       id: 'in-progress',

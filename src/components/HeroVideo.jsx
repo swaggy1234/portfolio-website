@@ -23,7 +23,7 @@ function drawImageContain(ctx, video, canvasWidth, canvasHeight) {
   ctx.drawImage(video, dx, dy, dw, dh);
 }
 
-function drawImageCover(ctx, video, canvasWidth, canvasHeight, rotation = 0) {
+function drawImageCover(ctx, video, canvasWidth, canvasHeight, rotation = 0, zoom = 1) {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) return;
@@ -35,7 +35,7 @@ function drawImageCover(ctx, video, canvasWidth, canvasHeight, rotation = 0) {
     ctx.save();
     ctx.translate(canvasWidth / 2, canvasHeight / 2);
     ctx.rotate((rot * Math.PI) / 180);
-    const scale = Math.max(canvasWidth / vh, canvasHeight / vw);
+    const scale = Math.max(canvasWidth / vh, canvasHeight / vw) * zoom;
     const dw = vw * scale;
     const dh = vh * scale;
     ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh);
@@ -43,7 +43,7 @@ function drawImageCover(ctx, video, canvasWidth, canvasHeight, rotation = 0) {
     return;
   }
 
-  const scale = Math.max(canvasWidth / vw, canvasHeight / vh);
+  const scale = Math.max(canvasWidth / vw, canvasHeight / vh) * zoom;
   const dw = vw * scale;
   const dh = vh * scale;
   const dx = (canvasWidth - dw) / 2;
@@ -150,16 +150,13 @@ export default function HeroVideo({
   const canvasRef = useRef(null);
   const parentRef = useRef(null);
   const rotationRef = useRef(layout.rotation || 0);
-  const loopCountRef = useRef(0);
-  const [loopRotation, setLoopRotation] = useState(0);
-  const loopRotationRef = useRef(0);
-  loopRotationRef.current = loopRotation;
   const [nativeAspect, setNativeAspect] = useState(null);
   const aspectRatio = nativeAspect ?? layout.aspectRatio ?? 9 / 16;
   const aspectRatioRef = useRef(aspectRatio);
   aspectRatioRef.current = aspectRatio;
   const fillLayout = isFillLayout(layout);
   const fillRotation = fillLayout ? (layout.rotation ?? 90) : 0;
+  const fillZoom = Math.max(1, layout.zoom ?? 1);
   const viewportLayout = isViewportLayout(layout);
   const [parentSize, setParentSize] = useState({ width: 0, height: 0 });
   const [percents, setPercents] = useState({
@@ -194,25 +191,13 @@ export default function HeroVideo({
     video.muted = true;
     video.playsInline = true;
 
-    const ROTATE_EVERY = 15;
-    let hasRotatedThisCycle = false;
-
     const play = () => {
       if (video.paused) video.play().catch(() => {});
     };
 
     const restart = () => {
-      hasRotatedThisCycle = false;
       video.currentTime = 0;
       play();
-    };
-
-    const onTimeUpdate = () => {
-      if (!hasRotatedThisCycle && video.currentTime >= ROTATE_EVERY) {
-        hasRotatedThisCycle = true;
-        loopCountRef.current += 1;
-        setLoopRotation((prev) => (prev + 90) % 360);
-      }
     };
 
     const onEnded = () => {
@@ -230,7 +215,6 @@ export default function HeroVideo({
     video.addEventListener('loadedmetadata', syncAspect);
     video.addEventListener('loadeddata', play);
     video.addEventListener('canplay', play);
-    video.addEventListener('timeupdate', onTimeUpdate);
     video.addEventListener('ended', onEnded);
 
     const onVisible = () => {
@@ -242,7 +226,6 @@ export default function HeroVideo({
       video.removeEventListener('loadedmetadata', syncAspect);
       video.removeEventListener('loadeddata', play);
       video.removeEventListener('canplay', play);
-      video.removeEventListener('timeupdate', onTimeUpdate);
       video.removeEventListener('ended', onEnded);
       document.removeEventListener('visibilitychange', onVisible);
     };
@@ -302,20 +285,10 @@ export default function HeroVideo({
       resize();
       if (video.readyState >= 2 && canvas.width > 0 && canvas.height > 0) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const lr = loopRotationRef.current;
-        if (lr !== 0) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate((lr * Math.PI) / 180);
-          ctx.translate(-canvas.width / 2, -canvas.height / 2);
-        }
         if (fillLayout) {
-          drawImageCover(ctx, video, canvas.width, canvas.height, fillRotation);
+          drawImageCover(ctx, video, canvas.width, canvas.height, fillRotation, fillZoom);
         } else {
           drawImageContain(ctx, video, canvas.width, canvas.height);
-        }
-        if (lr !== 0) {
-          ctx.restore();
         }
         try {
           const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -339,7 +312,7 @@ export default function HeroVideo({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [keyWhite, src, wrapReady, fillLayout, fillRotation]);
+  }, [keyWhite, src, wrapReady, fillLayout, fillRotation, fillZoom]);
 
   const showCanvas = keyWhite;
 
@@ -552,14 +525,12 @@ export default function HeroVideo({
     .filter(Boolean)
     .join(' ');
 
-  const loopTransform = loopRotation !== 0 ? { transform: `rotate(${loopRotation}deg)` } : undefined;
-
   const media = (
     <>
       <video
         ref={videoRef}
         className={showCanvas ? 'hero-video__source' : 'hero-video__el'}
-        style={{ ...blendStyle, ...(!showCanvas ? loopTransform : undefined) }}
+        style={blendStyle}
         src={src}
         muted
         playsInline

@@ -80,6 +80,7 @@ export default function InteractiveText({
   const fadeTimers = useRef({});
   const rafRef = useRef(null);
   const isHovering = useRef(false);
+  const pointerRef = useRef(null);
   const reducedMotion = usePrefersReducedMotion();
   const videoReactive = Boolean(videoOverlapCanvasRef && videoOverlapWrapRef);
   const palette = accentPalette?.length ? accentPalette : COLOR_PALETTE;
@@ -177,17 +178,25 @@ export default function InteractiveText({
       const canvas = videoOverlapCanvasRef.current;
       const wrap = videoOverlapWrapRef.current;
 
-      if (canvas?.width && wrap) {
-        const wrapRect = wrap.getBoundingClientRect();
+      const wrapRect = canvas?.width && wrap ? wrap.getBoundingClientRect() : null;
+      const pointer = pointerRef.current;
 
+      if (wrapRect || pointer) {
         letterRefs.current.forEach((entry) => {
           if (!entry?.el) return;
           const letterRect = entry.el.getBoundingClientRect();
-          const overlap = measureVideoOverlap(letterRect, wrapRect, canvas);
+          const overlap = wrapRect ? measureVideoOverlap(letterRect, wrapRect, canvas) : 0;
+          const pointerIntensity = pointer
+            ? 1 - Math.hypot(
+                pointer.x - (letterRect.left + letterRect.width / 2),
+                pointer.y - (letterRect.top + letterRect.height / 2)
+              ) / INFLUENCE_RADIUS
+            : 0;
+          const intensity = Math.max(overlap, pointerIntensity);
 
-          if (overlap > 0.12) {
+          if (intensity > 0.12) {
             entry.el.style.color = pickColor(entry.colorIndex, palette);
-            entry.el.style.opacity = String(0.7 + overlap * 0.3);
+            entry.el.style.opacity = String(0.7 + intensity * 0.3);
           } else {
             resetLetter(entry);
           }
@@ -207,7 +216,11 @@ export default function InteractiveText({
 
   const handleMouseMove = useCallback(
     (e) => {
-      if (reducedMotion || videoReactive) return;
+      if (reducedMotion) return;
+      if (videoReactive) {
+        pointerRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
       isHovering.current = true;
 
       const x = e.clientX;
@@ -225,7 +238,7 @@ export default function InteractiveText({
   );
 
   const handleMouseLeave = useCallback(() => {
-    if (videoReactive) return;
+    pointerRef.current = null;
     isHovering.current = false;
 
     letterRefs.current.forEach((entry, index) => {
@@ -253,6 +266,7 @@ export default function InteractiveText({
   return (
     <div
       className="interactive-text"
+      onMouseEnter={handleMouseMove}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onTouchStart={handleTouch}

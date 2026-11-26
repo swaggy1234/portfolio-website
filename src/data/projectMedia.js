@@ -1,8 +1,4 @@
-/**
- * Project media URLs.
- * Robotics PDF is served at /robotics-presentation.pdf by the Vite plugin
- * (copied from ~/.cache or Downloads so iCloud can't break the import).
- */
+/** Project PDFs bundled with the website for local previews and deployment. */
 export const projectMedia = {
   roboticsPresentationPdf: '/robotics-presentation.pdf',
   vispromFinalPaper: '/visprom-final-paper.pdf',

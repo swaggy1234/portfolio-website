@@ -71,13 +71,15 @@ function loadImage(src) {
 /**
  * Scroll-scrubbed lotus — one pass through frames (bud → bloom), cream bg removed.
  */
-export default function ScrollFlowerVideo() {
+export default function ScrollFlowerVideo({ galleryStage }) {
   const { scrollFlowerVideo } = siteConfig;
+  const flowerRef = useRef(null);
   const canvasRef = useRef(null);
   const framesRef = useRef([]);
   const lastIndexRef = useRef(-1);
   const reducedMotion = usePrefersReducedMotion();
   const [ready, setReady] = useState(false);
+  const [overGallery, setOverGallery] = useState(false);
   const [aspectRatio, setAspectRatio] = useState(16 / 9);
 
   const { scrollYProgress } = useScroll();
@@ -88,6 +90,42 @@ export default function ScrollFlowerVideo() {
   const lineThreshold = scrollFlowerVideo.lineThreshold ?? 225;
   const lineThickness = scrollFlowerVideo.lineThickness ?? 3;
   const lineColor = parseHexColor(scrollFlowerVideo.lineColor ?? '#3d0f24');
+
+  useEffect(() => {
+    const flower = flowerRef.current;
+    if (!flower || !galleryStage) return undefined;
+
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const flowerBox = flower.getBoundingClientRect();
+      const galleryBox = galleryStage.getBoundingClientRect();
+      setOverGallery(
+        flowerBox.bottom > galleryBox.top &&
+        flowerBox.top < galleryBox.bottom &&
+        flowerBox.right > galleryBox.left &&
+        flowerBox.left < galleryBox.right
+      );
+    };
+    const scheduleMeasure = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(flower);
+    observer.observe(galleryStage);
+    observer.observe(document.body);
+    window.addEventListener('scroll', scheduleMeasure, { passive: true });
+    window.addEventListener('resize', scheduleMeasure);
+    measure();
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('scroll', scheduleMeasure);
+      window.removeEventListener('resize', scheduleMeasure);
+    };
+  }, [galleryStage]);
 
   const paintFrame = useCallback(
     (img) => {
@@ -234,7 +272,8 @@ export default function ScrollFlowerVideo() {
 
   return (
     <div
-      className="scroll-flower"
+      ref={flowerRef}
+      className={`scroll-flower${overGallery ? ' scroll-flower--on-dark' : ''}`}
       style={{ aspectRatio: `${aspectRatio}` }}
       aria-hidden="true"
     >

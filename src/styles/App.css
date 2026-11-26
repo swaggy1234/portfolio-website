@@ -6,10 +6,77 @@
   position: relative;
 }
 
-.work {
+.section.recommendations {
+  background: var(--color-ivory);
+  padding-block: clamp(2rem, 5vw, 3.5rem) 0;
+}
+
+.recommendations__inner {
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border-left: 3px solid var(--color-magenta);
+  background: var(--color-blush);
+}
+
+.recommendations__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 2rem;
+  margin-bottom: 1.25rem;
+}
+
+.recommendations__quotes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+}
+
+.recommendations__quotes figure {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-ivory);
+}
+
+.recommendations blockquote {
+  color: var(--color-wine);
+  font-family: var(--font-serif);
+  font-size: clamp(1.25rem, 2.5vw, 1.6rem);
+  line-height: 1.25;
+}
+
+.recommendations figcaption {
+  margin-top: 0.75rem;
+  color: var(--color-plum);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.recommendations figcaption span {
+  display: block;
+  color: var(--color-muted);
+  font-weight: 400;
+}
+
+.recommendations h2 {
+  font-family: var(--font-serif);
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.recommendations a {
+  padding-block: 0.5rem;
+  color: var(--color-plum);
+  font-size: 0.95rem;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+.section.work {
   position: relative;
   background-color: var(--color-ivory);
-  padding-top: var(--section-padding);
+  padding-top: clamp(1.75rem, 4vw, 3rem);
 }
 
 .work__grid {

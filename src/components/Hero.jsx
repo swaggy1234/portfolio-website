@@ -204,8 +204,8 @@ export default function Hero({ stageRef }) {
         </button>
 
         <nav className={`hero__nav${menuOpen ? ' hero__nav--open' : ''}`}>
-          <button onClick={() => scrollTo('work')}>Work</button>
-          <button onClick={() => scrollTo('studio')}>Studio</button>
+          <button onClick={() => scrollTo('work')}>Technical Work</button>
+          <button onClick={() => scrollTo('studio')}>Creative Work</button>
           <button onClick={() => scrollTo('about')}>About</button>
           <button onClick={() => scrollTo('experience')}>Experience</button>
           <button onClick={() => scrollTo('contact')}>Contact</button>

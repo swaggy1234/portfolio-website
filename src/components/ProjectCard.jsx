@@ -2,16 +2,31 @@ import { motion } from 'framer-motion';
 import './ProjectCard.css';
 
 export default function ProjectCard({ project, index, onOpenPopup }) {
-  const usesPopup = Boolean(project.popup);
-  const href = usesPopup ? '#' : project.link || project.github || '#';
-  const isExternal = !usesPopup && /^https?:\/\//.test(href);
-  const ctaLabel = usesPopup
+  const opensStandalone = Boolean(project.openInNewWindow);
+  const usesPopup = Boolean(project.popup) && !opensStandalone;
+  const standaloneUrl = project.link || project.popupUrl || '';
+  const href = opensStandalone
+    ? standaloneUrl
+    : usesPopup
+      ? '#'
+      : project.link || project.github || '#';
+  const isExternal = opensStandalone || (!usesPopup && /^https?:\/\//.test(href));
+  const ctaLabel = opensStandalone || usesPopup
     ? 'View project'
     : project.github
       ? 'View on GitHub'
       : 'View project';
 
   const handleClick = (event) => {
+    if (opensStandalone && standaloneUrl) {
+      event.preventDefault();
+      window.open(
+        standaloneUrl,
+        'visprom',
+        'width=1440,height=900,menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes'
+      );
+      return;
+    }
     if (!usesPopup) return;
     event.preventDefault();
     onOpenPopup?.(project);
@@ -39,7 +54,7 @@ export default function ProjectCard({ project, index, onOpenPopup }) {
         >
           <img
             src={project.image}
-            alt={project.title}
+            alt={project.imageAlt || project.title}
             className="project-card__image"
             loading="lazy"
           />

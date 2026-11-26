@@ -4,32 +4,28 @@
 }
 
 .gallery__intro {
-  padding-top: var(--section-padding);
-  padding-bottom: 1.5rem;
+  padding: clamp(2rem, 5vw, 4rem) 1rem 0.75rem;
+  text-align: center;
 }
 
-.gallery__title {
-  color: var(--color-wine);
-  max-width: 16ch;
-  margin-bottom: 1rem;
-}
-
-.gallery__lede {
-  max-width: 36rem;
-  font-size: 0.95rem;
-  line-height: 1.6;
-  color: var(--color-muted);
+.gallery__intro .gallery__title {
+  color: #fff;
+  margin-bottom: 0;
 }
 
 .gallery__stage {
   position: relative;
   margin-top: 1.5rem;
-  height: min(92vh, 820px);
   background:
     radial-gradient(ellipse 50% 40% at 50% 18%, rgba(193, 85, 148, 0.16), transparent 60%),
     linear-gradient(#3a1822, #241016 62%, #1a0c10);
   color: #f7e9ef;
   touch-action: pan-y;
+}
+
+.gallery__viewport {
+  position: relative;
+  height: min(92vh, 820px);
 }
 
 .gallery__hud {

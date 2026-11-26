@@ -17,6 +17,10 @@
   background: transparent;
 }
 
+.scroll-flower--on-dark .scroll-flower__canvas {
+  filter: brightness(0) invert(1);
+}
+
 @media (max-width: 768px) {
   .scroll-flower {
     width: clamp(72px, 20vw, 100px);

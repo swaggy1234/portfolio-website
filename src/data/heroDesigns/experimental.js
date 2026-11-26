@@ -9,14 +9,14 @@
 
 export const experimentalHeroDesign = {
   id: 'experimental',
-  label: 'Pour video hero',
+  label: 'Koi pond hero',
 
   background: null,
   backgroundColor: '#ffffff',
   textTheme: 'dark',
   layout: 'centered',
 
-  /** Blues when the pour overlaps the statement text */
+  /** Blues when the koi overlap the statement text */
   textAccentPalette: [
     '#0f2847',
     '#1e4a7a',
@@ -28,19 +28,16 @@ export const experimentalHeroDesign = {
 
   heroVideo: {
     src: '/videos/hero-koi.mp4',
-    playbackRate: 1,
+    playbackRate: 0.7,
     loop: true,
     /** Removes white background frame-by-frame — true sticker transparency */
     keyWhite: true,
-    className: 'hero__sticker hero__sticker--pour',
+    className: 'hero__sticker hero__sticker--koi',
     layout: {
-      unit: 'viewport',
-      xPercent: 21.05,
-      yPercent: -49.86,
-      widthPercent: 59.02,
-      aspectRatio: 0.5625,
+      // A fixed overhead window into a larger pond; fish cross the frame edges.
+      unit: 'fill',
       rotation: 90,
-      referenceViewport: { width: 1512, height: 865 },
+      zoom: 1.18,
     },
   },
 

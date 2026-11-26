@@ -24,8 +24,9 @@ function fitVideoContain(videoWidth, videoHeight, viewWidth, viewHeight) {
   const width = videoWidth * scale;
   const height = videoHeight * scale;
   return {
-    x: (viewWidth - width) / 2,
-    y: (viewHeight - height) / 2,
+    // Keep the source's cropped arm flush with the screen's top/right edges.
+    x: viewWidth - width,
+    y: 0,
     width,
     height,
   };

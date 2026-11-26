@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Intro from './components/Intro';
 import Hero from './components/Hero';
@@ -33,6 +33,12 @@ export default function App() {
   const [popupProject, setPopupProject] = useState(null);
   const [galleryStage, setGalleryStage] = useState(null);
   const heroRef = useRef(null);
+
+  useEffect(() => {
+    if (showIntro || !window.location.hash) return;
+    const target = document.getElementById(window.location.hash.slice(1));
+    target?.scrollIntoView({ behavior: 'instant' });
+  }, [showIntro]);
 
   const handleIntroComplete = useCallback(() => {
     setShowIntro(false);

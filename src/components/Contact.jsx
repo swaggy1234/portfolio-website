@@ -1,22 +1,40 @@
+import { useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { siteConfig } from '../data/siteContent';
 import './Contact.css';
 
-function openInquiryEmail(event) {
-  event.preventDefault();
-  const fields = new FormData(event.currentTarget);
-  const subject = `Project inquiry: ${fields.get('project').trim()}`;
-  const body = [
-    `Name: ${fields.get('name').trim()}`,
-    `Email: ${fields.get('email').trim()}`,
-    '',
-    fields.get('details').trim(),
-  ].join('\r\n');
-
-  window.location.href = `${siteConfig.social.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
+const inquiryEndpoint = 'https://formspree.io/f/mbgobpzz';
 
 export default function Contact() {
+  const [status, setStatus] = useState('idle');
+  const sending = useRef(false);
+
+  async function sendInquiry(event) {
+    event.preventDefault();
+    if (sending.current) return;
+
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    fields.set('subject', `Project inquiry: ${fields.get('project').trim()}`);
+    sending.current = true;
+    setStatus('sending');
+
+    try {
+      const response = await fetch(inquiryEndpoint, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        body: fields,
+      });
+      if (!response.ok) throw new Error('Inquiry submission failed');
+      form.reset();
+      setStatus('sent');
+    } catch {
+      setStatus('error');
+    } finally {
+      sending.current = false;
+    }
+  }
+
   return (
     <section className="section contact" id="contact">
       <motion.div
@@ -36,7 +54,7 @@ export default function Contact() {
           I&apos;m available for creative technology contracts, interactive projects, and collaborations.
         </p>
 
-        <form className="contact__inquiry" onSubmit={openInquiryEmail} aria-labelledby="inquiry-title">
+        <form className="contact__inquiry" onSubmit={sendInquiry} aria-labelledby="inquiry-title">
           <h3 id="inquiry-title">Project inquiries</h3>
           <div className="contact__inquiry-fields">
             <label>
@@ -54,9 +72,15 @@ export default function Contact() {
           </label>
           <label>
             What are you working on?
-            <textarea name="details" rows={5} placeholder="Tell me about the idea, timeline, and budget if you have one." required maxLength={1200} />
+            <textarea name="message" rows={5} placeholder="Tell me about the idea, timeline, and budget if you have one." required maxLength={1200} />
           </label>
-          <button type="submit">Open email draft</button>
+          <button type="submit" disabled={status === 'sending'}>
+            {status === 'sending' ? 'Sending…' : 'Send inquiry'}
+          </button>
+          <p className="contact__inquiry-status" role="status">
+            {status === 'sent' && 'Thanks. Your inquiry was sent.'}
+            {status === 'error' && 'Your inquiry could not be sent. Please try again.'}
+          </p>
         </form>
 
         <a href={siteConfig.social.email} className="contact__email">

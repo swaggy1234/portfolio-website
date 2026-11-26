@@ -88,6 +88,19 @@
   background: var(--color-wine);
 }
 
+.contact__inquiry button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.contact__inquiry-status {
+  font-size: 0.9rem;
+}
+
+.contact__inquiry-status:empty {
+  margin-top: -1rem;
+}
+
 .contact__email:hover {
   opacity: 0.5;
 }
